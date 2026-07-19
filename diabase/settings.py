@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     "instances",
     "workspaces",
     "audit",
+    "agents",
 ]
 
 MIDDLEWARE = [
