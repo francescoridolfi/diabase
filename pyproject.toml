@@ -8,6 +8,8 @@ requires-python = ">=3.12"
 dependencies = [
     "django>=5.1",
     "djangorestframework>=3.15",
+    "anthropic>=0.40",
+    "claude-agent-sdk>=0.1",
 ]
 
 [dependency-groups]
@@ -23,7 +25,7 @@ dev = [
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "diabase.settings"
 python_files = ["test_*.py"]
-addopts = "--cov=instances --cov=workspaces --cov=audit --cov=diabase --cov-report=term-missing"
+addopts = "--cov=instances --cov=workspaces --cov=audit --cov=agents --cov=diabase --cov-report=term-missing"
 
 [tool.coverage.run]
 omit = ["*/migrations/*", "manage.py", "diabase/asgi.py", "diabase/wsgi.py"]
