@@ -61,7 +61,11 @@ class TestPolicy:
 class TestBoundToolset:
     def test_read_only_hides_write_tools_from_the_model(self, project):
         toolset = make_toolset(project, "read_only")
-        assert [s.name for s in toolset.allowed_specs()] == ["list_tables", "describe_table"]
+        assert [s.name for s in toolset.allowed_specs()] == [
+            "list_tables",
+            "describe_table",
+            "read_context_file",
+        ]
 
     def test_denied_call_raises_even_if_attempted(self, project):
         toolset = make_toolset(project, "read_only")
@@ -186,7 +190,12 @@ class TestAnthropicAPIBackend:
         assert events[1].output == {"tables": []}
         # advertised tools came from the registry
         sent_tools = fake_client.messages.create.call_args_list[0].kwargs["tools"]
-        assert [t["name"] for t in sent_tools] == ["list_tables", "describe_table", "execute_sql"]
+        assert [t["name"] for t in sent_tools] == [
+            "list_tables",
+            "describe_table",
+            "execute_sql",
+            "read_context_file",
+        ]
 
     def test_availability(self, monkeypatch):
         from agents.backends.anthropic_api import AnthropicAPIBackend
