@@ -12,8 +12,18 @@ Rules:
 
 
 def build_system_prompt(project) -> str:
-    """Base rules + the project's additional system prompt (when set)."""
-    extra = getattr(project, "system_prompt", "") or ""
-    if extra.strip():
-        return f"{BASE_SYSTEM_PROMPT}\n\n# Project instructions\n{extra.strip()}"
-    return BASE_SYSTEM_PROMPT
+    """Base rules + project prompt + context block.
+
+    Deterministic by design (see workspaces.context): the prompt must be
+    byte-identical across turns for provider prompt caching to hit.
+    """
+    from workspaces.context import build_context_block
+
+    parts = [BASE_SYSTEM_PROMPT]
+    extra = (project.system_prompt or "").strip()
+    if extra:
+        parts.append(f"# Project instructions\n{extra}")
+    context = build_context_block(project)
+    if context:
+        parts.append(context)
+    return "\n\n".join(parts)

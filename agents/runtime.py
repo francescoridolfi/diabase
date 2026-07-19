@@ -50,20 +50,21 @@ def run_turn(
     user_message: str,
     *,
     backend_name: str | None = None,
-    autonomy_level: str = DEFAULT_LEVEL,
+    autonomy_level: str | None = None,
     user: str = "",
 ) -> Iterator[TurnEvent]:
     from .models import Turn
 
     backend = get_backend(backend_name)
     server = project.server
+    level = autonomy_level or getattr(project, "autonomy_level", None) or DEFAULT_LEVEL
     adapter = AuditedAdapter(
         get_adapter(server.adapter_type, server.dsn),
         project=project,
         actor_type="agent",
         actor=backend.name,
     )
-    toolset = BoundToolset(adapter=adapter, policy=AutonomyPolicy(autonomy_level))
+    toolset = BoundToolset(adapter=adapter, policy=AutonomyPolicy(level), project=project, actor=backend.name)
 
     history = [
         {"role": m.role, "content": m.content}

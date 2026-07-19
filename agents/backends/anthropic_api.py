@@ -54,7 +54,9 @@ class AnthropicAPIBackend(AgentBackend):
                 response = client.messages.create(
                     model=self.model,
                     max_tokens=MAX_TOKENS,
-                    system=system_prompt,
+                    # cache breakpoint: the system prompt is deterministic by design
+                    # (see workspaces.context), so later turns pay ~10% on this part
+                    system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
                     tools=tools,
                     messages=messages,
                 )

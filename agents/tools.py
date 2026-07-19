@@ -55,6 +55,16 @@ TOOLS: list[ToolSpec] = [
         },
         risk=Risk.WRITE,
     ),
+    ToolSpec(
+        name="read_context_file",
+        description="Read one of the project's context files (see the context index in the system prompt).",
+        input_schema={
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "The context file name."}},
+            "required": ["name"],
+        },
+        risk=Risk.READ,
+    ),
 ]
 
 
@@ -74,11 +84,19 @@ class BoundToolset:
     """
 
     def __init__(
-        self, *, adapter: AuditedAdapter, policy: AutonomyPolicy, specs: list[ToolSpec] | None = None
+        self,
+        *,
+        adapter: AuditedAdapter,
+        policy: AutonomyPolicy,
+        specs: list[ToolSpec] | None = None,
+        project=None,
+        actor: str = "",
     ):
         self.adapter = adapter
         self.policy = policy
         self.specs = specs if specs is not None else TOOLS
+        self.project = project
+        self.actor = actor
 
     def allowed_specs(self) -> list[ToolSpec]:
         """The specs this policy level exposes at all (denied tools are
@@ -99,8 +117,32 @@ class BoundToolset:
                 return {"columns": self.adapter.describe_table(payload["table"])}
             if name == "execute_sql":
                 return self.adapter.execute_sql(payload["sql"])
+            if name == "read_context_file":
+                return self._read_context_file(payload["name"])
         except AdapterError as e:
             return {"error": str(e)}
         except KeyError as e:
             return {"error": f"Missing required argument: {e}"}
         return {"error": f"Tool {name!r} has no execution mapping"}  # pragma: no cover
+
+    def _read_context_file(self, file_name: str) -> dict:
+        """Context files live in Diabase's own DB, not behind the adapter,
+        so this read is audited here (the trail also shows WHICH context
+        the agent consulted before acting)."""
+        from audit.services import record
+
+        if self.project is None:
+            return {"error": "No project bound to this toolset"}
+        file = self.project.context_files.filter(name=file_name).first()
+        if file is None:
+            available = list(self.project.context_files.values_list("name", flat=True))
+            return {"error": f"No context file named {file_name!r}", "available": available}
+        record(
+            action="read_context_file",
+            actor_type="agent",
+            actor=self.actor,
+            project=self.project,
+            payload_in={"name": file_name},
+            payload_out={"size": file.size},
+        )
+        return {"name": file.name, "content": file.content}
