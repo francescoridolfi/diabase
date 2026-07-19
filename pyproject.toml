@@ -1,0 +1,55 @@
+[project]
+name = "diabase"
+version = "0.1.0"
+description = "Agent-safe control plane for Supabase, self-hosted or cloud"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+dependencies = [
+    "django>=5.1",
+    "djangorestframework>=3.15",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-django>=4.9",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "bandit[toml]>=1.8",
+    "pre-commit>=4.0",
+]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "diabase.settings"
+python_files = ["test_*.py"]
+addopts = "--cov=core --cov=diabase --cov-report=term-missing"
+
+[tool.coverage.run]
+omit = ["*/migrations/*", "manage.py", "diabase/asgi.py", "diabase/wsgi.py"]
+
+[tool.coverage.report]
+fail_under = 70
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear
+    "UP",  # pyupgrade
+    "S",   # bandit-flavored security rules
+    "DJ",  # flake8-django
+]
+[tool.ruff.lint.per-file-ignores]
+"**/test_*.py" = ["S101", "S106"]  # asserts and dummy passwords are fine in tests
+"**/settings.py" = ["S105"]        # the dev-fallback SECRET_KEY is documented as insecure
+
+[tool.bandit]
+exclude_dirs = [".venv", "tests", "node_modules"]
+skips = ["B101"]
