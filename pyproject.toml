@@ -23,7 +23,7 @@ dev = [
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "diabase.settings"
 python_files = ["test_*.py"]
-addopts = "--cov=core --cov=diabase --cov-report=term-missing"
+addopts = "--cov=instances --cov=workspaces --cov=audit --cov=diabase --cov-report=term-missing"
 
 [tool.coverage.run]
 omit = ["*/migrations/*", "manage.py", "diabase/asgi.py", "diabase/wsgi.py"]
@@ -34,6 +34,7 @@ fail_under = 70
 [tool.ruff]
 line-length = 110
 target-version = "py312"
+extend-exclude = ["*/migrations/*"]
 
 [tool.ruff.lint]
 select = [
