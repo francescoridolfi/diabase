@@ -7,7 +7,7 @@ from unittest import mock
 
 import pytest
 
-from core.adapters import (
+from instances.adapters import (
     AdapterError,
     PostgresAdapter,
     SQLiteAdapter,

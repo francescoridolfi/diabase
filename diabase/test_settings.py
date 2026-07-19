@@ -5,8 +5,8 @@ from django.apps import apps
 from django.urls import reverse
 
 
-def test_installed_apps_include_core():
-    assert apps.is_installed("core")
+def test_installed_apps_include_domain_apps():
+    assert all(apps.is_installed(a) for a in ("instances", "workspaces", "audit"))
 
 
 @pytest.mark.django_db
