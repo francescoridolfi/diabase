@@ -33,15 +33,38 @@ def build_context_block(project: Project) -> str:
             budget -= size
             inlined.append(f"## {f.name}\n{f.content.strip()}")
         else:
-            first_line = f.content.strip().splitlines()[0][:120] if f.content.strip() else ""
-            indexed.append(f"- {f.name} ({size} bytes) — {first_line}")
+            indexed.append(_index_entry(f, size))
 
     parts = ["# Project context"]
     if inlined:
         parts.extend(inlined)
     if indexed:
         parts.append(
-            "## Other context files (read on demand)\n"
-            "Use the read_context_file tool to read any of these when relevant:\n" + "\n".join(indexed)
+            "## Other context files (search, then read)\n"
+            "Locate what you need with search_context_files, then read the relevant range with "
+            "read_context_file (offset/limit) — do not read whole large files:\n" + "\n".join(indexed)
         )
     return "\n\n".join(parts)
+
+
+MAX_OUTLINE_HEADINGS = 8
+
+
+def _index_entry(f, size: int) -> str:
+    """A file's index line: name, size, line count, and a heading outline —
+    a table of contents the agent can target reads with, instead of a
+    single blind first-line preview."""
+    lines = f.content.splitlines()
+    headings = []
+    for i, line in enumerate(lines, start=1):
+        if line.lstrip().startswith("#"):
+            headings.append(f"{line.strip()[:80]} (line {i})")
+            if len(headings) >= MAX_OUTLINE_HEADINGS:
+                headings.append("…")
+                break
+    entry = f"- {f.name} ({size} bytes, {len(lines)} lines)"
+    if headings:
+        entry += "\n  " + "\n  ".join(headings)
+    elif lines:
+        entry += f" — {lines[0].strip()[:120]}"
+    return entry

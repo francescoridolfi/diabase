@@ -57,15 +57,40 @@ TOOLS: list[ToolSpec] = [
     ),
     ToolSpec(
         name="read_context_file",
-        description="Read one of the project's context files (see the context index in the system prompt).",
+        description=(
+            "Read part of a project context file (see the context index in the system prompt). "
+            "Prefer search_context_files first to find WHERE to read, then read the relevant "
+            "range — avoid reading whole large files."
+        ),
         input_schema={
             "type": "object",
-            "properties": {"name": {"type": "string", "description": "The context file name."}},
+            "properties": {
+                "name": {"type": "string", "description": "The context file name."},
+                "offset": {"type": "integer", "description": "1-based line to start from (default 1)."},
+                "limit": {"type": "integer", "description": "Max lines to return (default 200)."},
+            },
             "required": ["name"],
         },
         risk=Risk.READ,
     ),
+    ToolSpec(
+        name="search_context_files",
+        description=(
+            "Search all project context files for a case-insensitive text match. Returns matching "
+            "lines with file names and line numbers — use it to locate relevant sections before "
+            "reading them with read_context_file."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {"query": {"type": "string", "description": "Text to search for."}},
+            "required": ["query"],
+        },
+        risk=Risk.READ,
+    ),
 ]
+
+READ_DEFAULT_LIMIT = 200
+SEARCH_MAX_MATCHES = 40
 
 
 class ToolDenied(Exception):
@@ -118,17 +143,22 @@ class BoundToolset:
             if name == "execute_sql":
                 return self.adapter.execute_sql(payload["sql"])
             if name == "read_context_file":
-                return self._read_context_file(payload["name"])
+                return self._read_context_file(
+                    payload["name"], payload.get("offset") or 1, payload.get("limit") or READ_DEFAULT_LIMIT
+                )
+            if name == "search_context_files":
+                return self._search_context_files(payload["query"])
         except AdapterError as e:
             return {"error": str(e)}
         except KeyError as e:
             return {"error": f"Missing required argument: {e}"}
         return {"error": f"Tool {name!r} has no execution mapping"}  # pragma: no cover
 
-    def _read_context_file(self, file_name: str) -> dict:
+    def _read_context_file(self, file_name: str, offset: int, limit: int) -> dict:
         """Context files live in Diabase's own DB, not behind the adapter,
         so this read is audited here (the trail also shows WHICH context
-        the agent consulted before acting)."""
+        the agent consulted before acting). Line-ranged so large files are
+        read in targeted slices instead of one giant tool result."""
         from audit.services import record
 
         if self.project is None:
@@ -137,12 +167,54 @@ class BoundToolset:
         if file is None:
             available = list(self.project.context_files.values_list("name", flat=True))
             return {"error": f"No context file named {file_name!r}", "available": available}
+        lines = file.content.splitlines()
+        offset = max(1, int(offset))
+        limit = max(1, int(limit))
+        window = lines[offset - 1 : offset - 1 + limit]
         record(
             action="read_context_file",
             actor_type="agent",
             actor=self.actor,
             project=self.project,
-            payload_in={"name": file_name},
-            payload_out={"size": file.size},
+            payload_in={"name": file_name, "offset": offset, "limit": limit},
+            payload_out={"returned_lines": len(window), "total_lines": len(lines)},
         )
-        return {"name": file.name, "content": file.content}
+        return {
+            "name": file.name,
+            "content": "\n".join(window),
+            "offset": offset,
+            "returned_lines": len(window),
+            "total_lines": len(lines),
+            "has_more": offset - 1 + limit < len(lines),
+        }
+
+    def _search_context_files(self, query: str) -> dict:
+        """grep across every context file: the cheap 80% of RAG for text
+        docs — locate, then read the exact range."""
+        from audit.services import record
+
+        if self.project is None:
+            return {"error": "No project bound to this toolset"}
+        needle = query.strip().lower()
+        if not needle:
+            return {"error": "Empty search query"}
+        matches = []
+        truncated = False
+        for file in self.project.context_files.order_by("name"):
+            for i, line in enumerate(file.content.splitlines(), start=1):
+                if needle in line.lower():
+                    if len(matches) >= SEARCH_MAX_MATCHES:
+                        truncated = True
+                        break
+                    matches.append({"file": file.name, "line": i, "text": line.strip()[:200]})
+            if truncated:
+                break
+        record(
+            action="search_context_files",
+            actor_type="agent",
+            actor=self.actor,
+            project=self.project,
+            payload_in={"query": query},
+            payload_out={"matches": len(matches), "truncated": truncated},
+        )
+        return {"query": query, "matches": matches, "truncated": truncated}

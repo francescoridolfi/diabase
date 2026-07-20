@@ -27,3 +27,24 @@ class Turn(models.Model):
 
     def __str__(self):
         return f"{self.backend} turn on {self.project} → {self.status}"
+
+
+class TurnEvent(models.Model):
+    """One persisted runtime event, in emission order.
+
+    This is what makes a turn survive a page refresh: the background
+    worker (see runtime.start_turn) writes each event here the moment
+    it's produced, and the SSE view streams from a cursor — reconnecting
+    mid-turn just resumes from the last event id the client saw.
+    """
+
+    turn = models.ForeignKey(Turn, on_delete=models.CASCADE, related_name="events")
+    kind = models.CharField(max_length=30)
+    data = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["pk"]
+
+    def __str__(self):
+        return f"{self.turn_id}:{self.pk} {self.kind}"

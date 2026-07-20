@@ -1,0 +1,13 @@
+<div class="audit-page" data-has-more="{{ has_more|yesno:'1,0' }}" data-next-before="{{ next_before }}">
+  {% for e in entries %}
+  <div class="log-row {% if e.outcome != 'success' %}ko{% endif %}">
+    <span class="when">{{ e.created_at|date:"Y-m-d H:i:s" }}</span>
+    <span class="who">{{ e.actor_type }}{% if e.actor %} · {{ e.actor }}{% endif %}</span>
+    <span class="what">{{ e.action }}</span>
+    <span class="outcome {% if e.outcome == 'success' %}ok{% else %}err{% endif %}">{{ e.outcome }}</span>
+    {% if e.error %}<div class="err-detail">{{ e.error }}</div>{% endif %}
+  </div>
+  {% empty %}
+  <p style="color:var(--dim)">No entries.</p>
+  {% endfor %}
+</div>

@@ -25,7 +25,7 @@ dev = [
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = "diabase.settings"
 python_files = ["test_*.py"]
-addopts = "--cov=instances --cov=workspaces --cov=audit --cov=agents --cov=diabase --cov-report=term-missing"
+addopts = "--cov=instances --cov=workspaces --cov=audit --cov=agents --cov=web --cov=diabase --cov-report=term-missing"
 
 [tool.coverage.run]
 omit = ["*/migrations/*", "manage.py", "diabase/asgi.py", "diabase/wsgi.py"]

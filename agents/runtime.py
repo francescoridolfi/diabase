@@ -1,13 +1,26 @@
-"""The orchestrator: run_turn() is the ONLY entry point to execute an agent.
+"""The orchestrator: run_turn() and start_turn() are the ONLY entry points
+to execute an agent.
 
-It guarantees the invariants the backends cannot break:
+Both guarantee the invariants the backends cannot break:
 - the adapter is always wrapped in AuditedAdapter (no unaudited path)
 - the policy is always attached to the toolset
 - the user message and the reply are persisted and audited
 - every execution leaves a Turn row (backend, model, duration, outcome)
+
+run_turn() is a plain synchronous generator — used directly by tests and
+any code that wants to drive a turn to completion in-process.
+
+start_turn() is what the GUI uses: it returns as soon as the Turn row
+exists, and runs the actual turn in a background thread, persisting
+every event to TurnEvent as it happens. This decouples a turn's lifetime
+from the HTTP request that started it — a page refresh, or any number of
+tabs, can reconnect to the same turn's event stream mid-flight instead
+of losing it.
 """
 
+import dataclasses
 import os
+import threading
 from collections.abc import Iterator
 
 from django.utils import timezone
@@ -45,17 +58,7 @@ def get_backend(name: str | None = None) -> AgentBackend:
     raise RuntimeError("No agent backend is available (see each backend's configuration)")
 
 
-def run_turn(
-    project: Project,
-    user_message: str,
-    *,
-    backend_name: str | None = None,
-    autonomy_level: str | None = None,
-    user: str = "",
-) -> Iterator[TurnEvent]:
-    from .models import Turn
-
-    backend = get_backend(backend_name)
+def _prepare(project: Project, backend: AgentBackend, autonomy_level: str | None):
     server = project.server
     level = autonomy_level or getattr(project, "autonomy_level", None) or DEFAULT_LEVEL
     adapter = AuditedAdapter(
@@ -65,13 +68,28 @@ def run_turn(
         actor=backend.name,
     )
     toolset = BoundToolset(adapter=adapter, policy=AutonomyPolicy(level), project=project, actor=backend.name)
-
     history = [
         {"role": m.role, "content": m.content}
         for m in project.messages.all()
         if m.role in ("user", "assistant") and m.content.strip()
     ]
+    return toolset, history
 
+
+def _start(
+    project: Project,
+    user_message: str,
+    user: str,
+    backend_name: str | None,
+    autonomy_level: str | None,
+):
+    """Shared synchronous setup: resolve backend, create the Turn row,
+    persist + audit the user's message. Both run_turn and start_turn need
+    exactly this, before execution (sync or threaded) takes over."""
+    from .models import Turn
+
+    backend = get_backend(backend_name)
+    toolset, history = _prepare(project, backend, autonomy_level)
     turn = Turn.objects.create(
         project=project,
         backend=backend.name,
@@ -86,12 +104,17 @@ def run_turn(
         project=project,
         payload_in={"message": user_message},
     )
+    return turn, backend, toolset, history
 
+
+def _drive(
+    turn, project: Project, backend: AgentBackend, toolset, history, user_message: str
+) -> Iterator[TurnEvent]:
     def finalize(status: str, *, reply: str = "", error: str = ""):
         turn.status = status
         turn.error = error
         turn.finished_at = timezone.now()
-        turn.save()
+        turn.save(update_fields=["status", "error", "finished_at"])
         if reply:
             ChatMessage.objects.create(project=project, role="assistant", content=reply)
             record(
@@ -117,3 +140,51 @@ def run_turn(
     except Exception as e:
         finalize("failed", error=f"{type(e).__name__}: {e}")
         yield TurnFailed(error=f"{type(e).__name__}: {e}")
+
+
+def run_turn(
+    project: Project,
+    user_message: str,
+    *,
+    backend_name: str | None = None,
+    autonomy_level: str | None = None,
+    user: str = "",
+) -> Iterator[TurnEvent]:
+    """Drive a turn to completion synchronously, yielding events as they
+    happen. Used by tests and any in-process caller."""
+    turn, backend, toolset, history = _start(project, user_message, user, backend_name, autonomy_level)
+    yield from _drive(turn, project, backend, toolset, history, user_message)
+
+
+def start_turn(
+    project: Project,
+    user_message: str,
+    *,
+    backend_name: str | None = None,
+    autonomy_level: str | None = None,
+    user: str = "",
+):
+    """Create the Turn synchronously, execute it on a background thread.
+
+    Every event is persisted to TurnEvent as it's produced. The caller
+    gets the Turn back immediately (its pk is what the GUI subscribes
+    to); the HTTP request that called this never has to stay open for
+    the turn's whole duration.
+    """
+    from .models import TurnEvent as TurnEventRow
+
+    turn, backend, toolset, history = _start(project, user_message, user, backend_name, autonomy_level)
+
+    def worker():
+        try:
+            for event in _drive(turn, project, backend, toolset, history, user_message):
+                TurnEventRow.objects.create(
+                    turn=turn, kind=type(event).__name__, data=dataclasses.asdict(event)
+                )
+        finally:
+            from django.db import connections
+
+            connections.close_all()  # this thread's connection must not linger in the pool
+
+    threading.Thread(target=worker, daemon=True).start()
+    return turn
