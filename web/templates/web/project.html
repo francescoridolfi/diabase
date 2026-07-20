@@ -73,7 +73,7 @@
       <div class="orb-hint">View schema</div>
     </div>
     <div id="chatlog">
-      {% for m in chat %}<div class="msg {{ m.role }}" data-md="{% if m.role == 'assistant' %}1{% endif %}">{{ m.content }}</div>{% endfor %}
+      {% for m in chat %}<div class="msg {% if m.kind == 'plan_result' %}plan-note{% else %}{{ m.role }}{% endif %}" data-md="{% if m.role == 'assistant' %}1{% endif %}">{{ m.content }}</div>{% endfor %}
     </div>
     <form id="chatform" class="chatbox">{% csrf_token %}
       <textarea id="msg" rows="2" placeholder="Ask anything about your backend" {% if not agent.ok %}disabled{% endif %}></textarea>
@@ -156,8 +156,10 @@
     contextFileGetUrl: "{% url 'context_file_json' project.pk %}",
     contextFileDeleteUrl: "{% url 'context_file_delete' project.pk %}",
     projectUpdateUrl: "{% url 'project_update' project.pk %}",
+    planBase: "{% url 'plan_json' project.pk 0 %}".replace(/0\/$/, ""),
     csrfToken: "{{ csrf_token }}",
     activeTurnId: {{ active_turn_id|default:"null" }},
+    activePlanId: {{ active_plan_id|default:"null" }},
   };
 </script>
 {% endblock %}

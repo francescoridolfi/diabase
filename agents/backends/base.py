@@ -38,6 +38,25 @@ class ToolCallFinished(TurnEvent):
 
 
 @dataclass(frozen=True)
+class ToolCallPlanned(TurnEvent):
+    """A write call intercepted by the plan gate: queued as a plan step
+    instead of executing (see agents.tools.BoundToolset._queue_step)."""
+
+    tool: str
+    payload: dict = field(default_factory=dict)
+    step: int = 0
+
+
+@dataclass(frozen=True)
+class PlanProposed(TurnEvent):
+    """Emitted by the runtime when a completed turn leaves a plan with
+    steps waiting for the user's decision."""
+
+    plan_id: int
+    steps: int = 0
+
+
+@dataclass(frozen=True)
 class ToolCallDenied(TurnEvent):
     tool: str
     payload: dict = field(default_factory=dict)

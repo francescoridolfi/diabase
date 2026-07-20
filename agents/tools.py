@@ -46,6 +46,20 @@ TOOLS: list[ToolSpec] = [
         risk=Risk.READ,
     ),
     ToolSpec(
+        name="query_sql",
+        description=(
+            "Run a single READ-ONLY SQL statement (SELECT over tables or system catalogs like "
+            "pg_policies, pg_indexes, information_schema). The database itself rejects writes on "
+            "this path, so use it freely to inspect state; use execute_sql for anything that mutates."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {"sql": {"type": "string", "description": "One read-only SQL statement."}},
+            "required": ["sql"],
+        },
+        risk=Risk.READ,
+    ),
+    ToolSpec(
         name="execute_sql",
         description="Execute a single SQL statement (DDL or DML) on the project's database.",
         input_schema={
@@ -116,12 +130,14 @@ class BoundToolset:
         specs: list[ToolSpec] | None = None,
         project=None,
         actor: str = "",
+        turn=None,
     ):
         self.adapter = adapter
         self.policy = policy
         self.specs = specs if specs is not None else TOOLS
         self.project = project
         self.actor = actor
+        self.turn = turn  # the running Turn: where queued plan steps attach
 
     def allowed_specs(self) -> list[ToolSpec]:
         """The specs this policy level exposes at all (denied tools are
@@ -135,11 +151,15 @@ class BoundToolset:
         decision = self.policy.check(spec)
         if not decision.allowed:
             raise ToolDenied(decision.reason)
+        if decision.requires_plan:
+            return self._queue_step(spec, payload)
         try:
             if name == "list_tables":
                 return {"tables": self.adapter.list_tables()}
             if name == "describe_table":
                 return {"columns": self.adapter.describe_table(payload["table"])}
+            if name == "query_sql":
+                return self.adapter.query_sql(payload["sql"])
             if name == "execute_sql":
                 return self.adapter.execute_sql(payload["sql"])
             if name == "read_context_file":
@@ -153,6 +173,40 @@ class BoundToolset:
         except KeyError as e:
             return {"error": f"Missing required argument: {e}"}
         return {"error": f"Tool {name!r} has no execution mapping"}  # pragma: no cover
+
+    def _queue_step(self, spec: ToolSpec, payload: dict) -> dict:
+        """The plan gate: instead of executing, append the call to the
+        turn's draft Plan and tell the model it was queued. The model
+        keeps planning in the same turn; nothing touches the instance
+        until the user approves. Backends detect the "planned" key to
+        emit ToolCallPlanned instead of ToolCallFinished."""
+        from audit.services import record
+
+        from .models import Plan, PlanStep
+
+        if self.turn is None or self.project is None:
+            return {"error": "This project requires a plan for writes, but no turn is bound to queue into"}
+        plan, _ = Plan.objects.get_or_create(
+            turn=self.turn, status="draft", defaults={"project": self.project}
+        )
+        step = PlanStep.objects.create(
+            plan=plan, order=plan.steps.count() + 1, tool=spec.name, payload=payload
+        )
+        record(
+            action="plan.step_queued",
+            actor_type="agent",
+            actor=self.actor,
+            project=self.project,
+            payload_in={"plan": plan.pk, "step": step.order, "tool": spec.name, **payload},
+        )
+        return {
+            "planned": {"plan": plan.pk, "step": step.order},
+            "note": (
+                "Queued as step "
+                f"{step.order} of the proposed plan — it will run only after the user approves. "
+                "Queue any further writes, then summarize the plan for the user."
+            ),
+        }
 
     def _read_context_file(self, file_name: str, offset: int, limit: int) -> dict:
         """Context files live in Diabase's own DB, not behind the adapter,

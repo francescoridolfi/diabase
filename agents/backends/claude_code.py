@@ -26,6 +26,7 @@ from .base import (
     TextDelta,
     ToolCallDenied,
     ToolCallFinished,
+    ToolCallPlanned,
     ToolCallStarted,
     TurnCompleted,
     TurnEvent,
@@ -97,7 +98,10 @@ class ClaudeCodeBackend(AgentBackend):
                     # run off the event loop thread or Django raises
                     # SynchronousOnlyOperation
                     output = await asyncio.to_thread(toolset.execute, spec.name, payload)
-                    q.put(ToolCallFinished(tool=spec.name, payload=payload, output=output))
+                    if planned := output.get("planned"):
+                        q.put(ToolCallPlanned(tool=spec.name, payload=payload, step=planned["step"]))
+                    else:
+                        q.put(ToolCallFinished(tool=spec.name, payload=payload, output=output))
                 except ToolDenied as e:
                     output = {"error": f"Denied by policy: {e}"}
                     q.put(ToolCallDenied(tool=spec.name, payload=payload, reason=str(e)))

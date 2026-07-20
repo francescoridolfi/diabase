@@ -30,7 +30,7 @@ from instances.adapters import get_adapter
 from workspaces.models import ChatMessage, Project
 
 from .backends.anthropic_api import AnthropicAPIBackend
-from .backends.base import AgentBackend, TurnCompleted, TurnEvent, TurnFailed
+from .backends.base import AgentBackend, PlanProposed, TurnCompleted, TurnEvent, TurnFailed
 from .backends.claude_code import ClaudeCodeBackend
 from .backends.openai_compat import OpenAICompatBackend
 from .policy import DEFAULT_LEVEL, AutonomyPolicy
@@ -73,7 +73,7 @@ def get_backend(name: str | None = None, project: Project | None = None) -> Agen
     raise RuntimeError("No agent backend is available (see each backend's configuration)")
 
 
-def _prepare(project: Project, backend: AgentBackend, autonomy_level: str | None):
+def _prepare(project: Project, backend: AgentBackend, autonomy_level: str | None, turn=None):
     server = project.server
     level = autonomy_level or getattr(project, "autonomy_level", None) or DEFAULT_LEVEL
     adapter = AuditedAdapter(
@@ -82,7 +82,9 @@ def _prepare(project: Project, backend: AgentBackend, autonomy_level: str | None
         actor_type="agent",
         actor=backend.name,
     )
-    toolset = BoundToolset(adapter=adapter, policy=AutonomyPolicy(level), project=project, actor=backend.name)
+    toolset = BoundToolset(
+        adapter=adapter, policy=AutonomyPolicy(level), project=project, actor=backend.name, turn=turn
+    )
     history = [
         {"role": m.role, "content": m.content}
         for m in project.messages.all()
@@ -97,6 +99,7 @@ def _start(
     user: str,
     backend_name: str | None,
     autonomy_level: str | None,
+    message_kind: str = "chat",
 ):
     """Shared synchronous setup: resolve backend, create the Turn row,
     persist + audit the user's message. Both run_turn and start_turn need
@@ -104,17 +107,18 @@ def _start(
     from .models import Turn
 
     backend = get_backend(backend_name, project)
-    toolset, history = _prepare(project, backend, autonomy_level)
     turn = Turn.objects.create(
         project=project,
         backend=backend.name,
         model=getattr(backend, "model", ""),
         user_message=user_message,
     )
-    ChatMessage.objects.create(project=project, role="user", content=user_message)
+    # the toolset needs the Turn: queued plan steps attach to it
+    toolset, history = _prepare(project, backend, autonomy_level, turn)
+    ChatMessage.objects.create(project=project, role="user", content=user_message, kind=message_kind)
     record(
         action="chat.message",
-        actor_type="user",
+        actor_type="user" if message_kind == "chat" else "system",
         actor=user,
         project=project,
         payload_in={"message": user_message},
@@ -149,12 +153,43 @@ def _drive(
         ):
             if isinstance(event, TurnCompleted):
                 finalize("completed", reply=event.reply)
+                plan = _propose_draft_plan(turn, backend.name)
+                if plan:
+                    yield PlanProposed(plan_id=plan.pk, steps=plan.steps.count())
             elif isinstance(event, TurnFailed):
                 finalize("failed", error=event.error)
+                _discard_draft_plan(turn)
             yield event
     except Exception as e:
         finalize("failed", error=f"{type(e).__name__}: {e}")
+        _discard_draft_plan(turn)
         yield TurnFailed(error=f"{type(e).__name__}: {e}")
+
+
+def _propose_draft_plan(turn, actor: str):
+    """A completed turn that queued write steps leaves them as a proposed
+    plan for the user to decide on. Empty drafts are discarded."""
+    plan = turn.plans.filter(status="draft").first()
+    if plan is None:
+        return None
+    if not plan.steps.exists():
+        plan.delete()
+        return None
+    plan.status = "proposed"
+    plan.save(update_fields=["status"])
+    record(
+        action="plan.proposed",
+        actor_type="agent",
+        actor=actor,
+        project=turn.project,
+        payload_out={"plan": plan.pk, "steps": plan.steps.count()},
+    )
+    return plan
+
+
+def _discard_draft_plan(turn):
+    """A failed turn's half-built draft must never reach the user."""
+    turn.plans.filter(status="draft").update(status="superseded")
 
 
 def run_turn(
@@ -178,6 +213,7 @@ def start_turn(
     backend_name: str | None = None,
     autonomy_level: str | None = None,
     user: str = "",
+    message_kind: str = "chat",
 ):
     """Create the Turn synchronously, execute it on a background thread.
 
@@ -188,7 +224,9 @@ def start_turn(
     """
     from .models import TurnEvent as TurnEventRow
 
-    turn, backend, toolset, history = _start(project, user_message, user, backend_name, autonomy_level)
+    turn, backend, toolset, history = _start(
+        project, user_message, user, backend_name, autonomy_level, message_kind
+    )
 
     def worker():
         try:
@@ -203,3 +241,138 @@ def start_turn(
 
     threading.Thread(target=worker, daemon=True).start()
     return turn
+
+
+# ---------------------------------------------------------------------------
+# Plan decisions (phase 2): every path below is user-initiated and audited.
+# ---------------------------------------------------------------------------
+
+STEP_OUTPUT_PREVIEW_CHARS = 500
+
+
+def approve_plan(plan, *, user: str = ""):
+    """Mark the plan approved and apply it on a background thread.
+
+    Each step runs through an AuditedAdapter with the USER as actor — the
+    trail shows who authorized every statement. When the last step is done
+    (or one fails), the real results are handed back to the agent as an
+    automatic continuation turn (the incremental-apply loop the user chose
+    over blind multi-step plans).
+    """
+    _decide(plan, "applying", "plan.approved", user)
+
+    def worker():
+        try:
+            _apply(plan, user)
+        finally:
+            from django.db import connections
+
+            connections.close_all()
+
+    threading.Thread(target=worker, daemon=True).start()
+    return plan
+
+
+def reject_plan(plan, *, user: str = ""):
+    """Reject without executing anything; the agent learns about it from
+    a plan_result message the next time it runs."""
+    _decide(plan, "rejected", "plan.rejected", user)
+    ChatMessage.objects.create(
+        project=plan.project,
+        role="user",
+        kind="plan_result",
+        content=f"Plan #{plan.pk} was rejected by the user. None of its steps were executed.",
+    )
+    return plan
+
+
+def revise_plan(plan, comment: str, *, user: str = ""):
+    """Supersede the plan and hand the user's comment to the agent as a
+    fresh turn — it proposes a new plan informed by the feedback."""
+    _decide(plan, "superseded", "plan.superseded", user)
+    message = f"Plan #{plan.pk} was not applied. Revise it: {comment}"
+    return start_turn(plan.project, message, user=user)
+
+
+def _decide(plan, status: str, action: str, user: str):
+    from django.utils import timezone as tz
+
+    plan.status = status
+    plan.decided_by = user
+    plan.decided_at = tz.now()
+    plan.save(update_fields=["status", "decided_by", "decided_at"])
+    record(
+        action=action,
+        actor_type="user",
+        actor=user,
+        project=plan.project,
+        payload_in={"plan": plan.pk, "steps": plan.steps.count()},
+    )
+
+
+def _apply(plan, user: str):
+    """Execute the approved steps in order; stop at the first failure."""
+    project = plan.project
+    server = project.server
+    adapter = AuditedAdapter(
+        get_adapter(server.adapter_type, server.dsn), project=project, actor_type="user", actor=user
+    )
+    failed = False
+    for step in plan.steps.order_by("order"):
+        if failed:
+            step.status = "skipped"
+            step.save(update_fields=["status"])
+            continue
+        if step.tool == "execute_sql":
+            try:
+                output = adapter.execute_sql(step.payload.get("sql", ""))
+            except Exception as e:
+                output = {"error": f"{type(e).__name__}: {e}"}
+        else:
+            output = {"error": f"Plan step has no executor for tool {step.tool!r}"}
+        step.output = output if isinstance(output, dict) else {"result": output}
+        step.status = "failed" if "error" in step.output else "applied"
+        step.save(update_fields=["status", "output"])
+        if step.status == "failed":
+            failed = True
+            plan.error = str(step.output.get("error", ""))
+
+    plan.status = "failed" if failed else "applied"
+    plan.save(update_fields=["status", "error"])
+    record(
+        action="plan.applied" if not failed else "plan.apply_failed",
+        actor_type="user",
+        actor=user,
+        project=project,
+        payload_out={"plan": plan.pk, "steps": plan.steps.count()},
+        outcome="success" if not failed else "error",
+        error=plan.error,
+    )
+
+    # incremental apply: the agent continues from the REAL results
+    turn = start_turn(project, _apply_report(plan), user=user, message_kind="plan_result")
+    plan.continuation_turn = turn
+    plan.save(update_fields=["continuation_turn"])
+
+
+def _apply_report(plan) -> str:
+    """The plan_result message: what actually happened, step by step."""
+    import json
+
+    lines = [
+        f"Plan #{plan.pk} was approved and applied."
+        if plan.status == "applied"
+        else f"Plan #{plan.pk} was approved but FAILED while applying."
+    ]
+    for step in plan.steps.order_by("order"):
+        preview = json.dumps(step.output, default=str)[:STEP_OUTPUT_PREVIEW_CHARS]
+        if step.status == "skipped":
+            lines.append(f"Step {step.order} ({step.tool}): skipped (a previous step failed).")
+        else:
+            lines.append(f"Step {step.order} ({step.tool}): {step.status} — {preview}")
+    lines.append(
+        "Verify the outcome and continue toward the goal."
+        if plan.status == "applied"
+        else "Revise your approach based on the error above and propose a new plan."
+    )
+    return "\n".join(lines)

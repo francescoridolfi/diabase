@@ -33,6 +33,12 @@ class BaseAdapter:
     def execute_sql(self, sql: str):
         raise NotImplementedError
 
+    def query_sql(self, sql: str):
+        """Run ONE read-only statement. Enforced by the DATABASE, not by
+        parsing: each adapter runs the query in a context where writes
+        are rejected by the engine itself."""
+        raise NotImplementedError
+
     def get_schema(self):
         """Full schema as {table: [columns]} for the schema view."""
         return {t: self.describe_table(t) for t in self.list_tables()}
@@ -44,6 +50,19 @@ _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 def _check_identifier(name: str):
     if not _IDENT_RE.match(name):
         raise AdapterError(f"Invalid table name: {name!r}")
+
+
+def _single_statement(sql: str) -> str:
+    """The read-only guards below wrap or configure a transaction around
+    the statement; a second statement smuggled in with ';' could escape
+    it (e.g. 'SELECT 1; COMMIT; DROP ...'). One statement per call —
+    same contract execute_sql documents."""
+    sql = sql.strip().rstrip(";").strip()
+    if not sql:
+        raise AdapterError("Empty query")
+    if ";" in sql:
+        raise AdapterError("query_sql runs exactly one statement (no ';' separators)")
+    return sql
 
 
 class SQLiteAdapter(BaseAdapter):
@@ -90,6 +109,27 @@ class SQLiteAdapter(BaseAdapter):
                 return {"columns": cols, "rows": rows, "truncated_at": 50}
             conn.commit()
             return {"rows_affected": cur.rowcount}
+
+    def query_sql(self, sql: str):
+        sql = _single_statement(sql)
+        # mode=ro is filesystem-level: even a PRAGMA in the statement
+        # cannot turn this connection writable
+        try:
+            conn = sqlite3.connect(f"file:{self.dsn}?mode=ro", uri=True, timeout=5)
+        except sqlite3.OperationalError as e:
+            raise AdapterError(f"Cannot open database read-only: {e}") from None
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.execute(sql)
+            if not cur.description:
+                return {"columns": [], "rows": []}
+            cols = [c[0] for c in cur.description]
+            rows = [dict(zip(cols, r, strict=True)) for r in cur.fetchmany(50)]
+            return {"columns": cols, "rows": rows, "truncated_at": 50}
+        except sqlite3.Error as e:
+            raise AdapterError(f"Read-only query failed: {e}") from None
+        finally:
+            conn.close()
 
 
 _FK_SQL = (
@@ -168,6 +208,27 @@ class PostgresAdapter(BaseAdapter):
                 }
             conn.commit()
             return {"rows_affected": cur.rowcount}
+
+    def query_sql(self, sql: str):
+        sql = _single_statement(sql)
+        with self._connect() as conn:
+            conn.set_session(readonly=True)  # the server rejects writes, functions included
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql)
+                    if not cur.description:
+                        return {"columns": [], "rows": []}
+                    cols = [c[0] for c in cur.description]
+                    rows = [dict(zip(cols, r, strict=True)) for r in cur.fetchmany(50)]
+                    return {
+                        "columns": cols,
+                        "rows": [{k: str(v) for k, v in r.items()} for r in rows],
+                        "truncated_at": 50,
+                    }
+            except Exception as e:
+                raise AdapterError(f"Read-only query failed: {e}") from None
+            finally:
+                conn.rollback()
 
 
 class SupabaseCloudAdapter(BaseAdapter):
@@ -298,6 +359,21 @@ class SupabaseCloudAdapter(BaseAdapter):
                 "truncated_at": 50,
             }
         return {"ok": True, "rows": []}
+
+    def query_sql(self, sql: str):
+        sql = _single_statement(sql)
+        # verified against the live API: the response carries the SELECT's
+        # rows even when wrapped, and a write inside the wrap fails with
+        # ERROR 25006 "cannot execute ... in a read-only transaction"
+        rows = self._query(f"begin transaction read only; {sql}; rollback")
+        if rows:
+            cols = list(rows[0].keys())
+            return {
+                "columns": cols,
+                "rows": [{k: str(v) for k, v in r.items()} for r in rows[:50]],
+                "truncated_at": 50,
+            }
+        return {"columns": [], "rows": []}
 
     def get_schema(self):
         """Whole schema in 4 API calls, however many tables there are.

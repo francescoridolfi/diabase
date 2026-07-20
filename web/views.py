@@ -78,6 +78,8 @@ def project_create(request):
 def project_room(request, pk):
     project = get_object_or_404(Project.objects.select_related("server"), pk=pk)
     active_turn = project.turns.filter(status="running").order_by("-started_at").first()
+    # a plan awaiting a decision (or being applied) must survive a refresh
+    active_plan = project.plans.filter(status__in=["proposed", "applying"]).first()
     return render(
         request,
         "web/project.html",
@@ -91,6 +93,7 @@ def project_room(request, pk):
             "agent": _agent_status(project),
             "backends": sorted(BACKENDS),
             "active_turn_id": active_turn.pk if active_turn else None,
+            "active_plan_id": active_plan.pk if active_plan else None,
         },
     )
 
@@ -286,6 +289,76 @@ def turn_start(request, pk):
         return JsonResponse({"error": "Empty message"}, status=400)
     turn = start_turn(project, message, user=_actor(request))
     return JsonResponse({"turn_id": turn.pk})
+
+
+def _plan_payload(plan) -> dict:
+    return {
+        "id": plan.pk,
+        "status": plan.status,
+        "error": plan.error,
+        "continuation_turn_id": plan.continuation_turn_id,
+        "steps": [
+            {"order": s.order, "tool": s.tool, "payload": s.payload, "status": s.status, "output": s.output}
+            for s in plan.steps.all()
+        ],
+    }
+
+
+def plan_json(request, pk, plan_id):
+    """One plan with its steps — the room's plan card renders from this,
+    both on first load and while polling during an apply."""
+    from agents.models import Plan
+
+    project = get_object_or_404(Project, pk=pk)
+    plan = get_object_or_404(Plan, pk=plan_id, project=project)
+    return JsonResponse(_plan_payload(plan))
+
+
+def _decidable_plan(pk, plan_id):
+    from agents.models import Plan
+
+    project = get_object_or_404(Project, pk=pk)
+    return get_object_or_404(Plan, pk=plan_id, project=project)
+
+
+@require_POST
+def plan_approve(request, pk, plan_id):
+    from agents.runtime import approve_plan
+
+    plan = _decidable_plan(pk, plan_id)
+    if plan.status != "proposed":
+        return JsonResponse({"error": f"Plan is {plan.status}, not proposed"}, status=409)
+    approve_plan(plan, user=_actor(request))
+    return JsonResponse(_plan_payload(plan))
+
+
+@require_POST
+def plan_reject(request, pk, plan_id):
+    from agents.runtime import reject_plan
+
+    plan = _decidable_plan(pk, plan_id)
+    if plan.status != "proposed":
+        return JsonResponse({"error": f"Plan is {plan.status}, not proposed"}, status=409)
+    reject_plan(plan, user=_actor(request))
+    return JsonResponse(_plan_payload(plan))
+
+
+@require_POST
+def plan_revise(request, pk, plan_id):
+    from agents.runtime import revise_plan
+
+    plan = _decidable_plan(pk, plan_id)
+    if plan.status != "proposed":
+        return JsonResponse({"error": f"Plan is {plan.status}, not proposed"}, status=409)
+    try:
+        body = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+    comment = (body.get("comment") or "").strip()
+    if not comment:
+        return JsonResponse({"error": "Empty revision comment"}, status=400)
+    turn = revise_plan(plan, comment, user=_actor(request))
+    return JsonResponse({**_plan_payload(plan), "turn_id": turn.pk})
 
 
 def turn_stream(request, pk, turn_id):

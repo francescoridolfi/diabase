@@ -282,3 +282,81 @@ class TestConnectionsViews:
         r = client.get(reverse("connections"))
         assert b"Sec" in r.content
         assert b"abcdefghijklmnop" not in r.content  # full key never rendered
+
+
+@pytest.fixture
+def proposed_plan(project):
+    from agents.models import Plan, PlanStep, Turn
+
+    turn = Turn.objects.create(project=project, backend="fake", user_message="x")
+    plan = Plan.objects.create(project=project, turn=turn, status="proposed")
+    PlanStep.objects.create(
+        plan=plan, order=1, tool="execute_sql", payload={"sql": "CREATE TABLE t (id INTEGER)"}
+    )
+    return plan
+
+
+class TestPlanViews:
+    def test_plan_json_shape(self, client, project, proposed_plan):
+        r = client.get(reverse("plan_json", args=[project.pk, proposed_plan.pk]))
+        assert r.status_code == 200
+        data = r.json()
+        assert data["id"] == proposed_plan.pk and data["status"] == "proposed"
+        assert data["steps"][0]["payload"]["sql"] == "CREATE TABLE t (id INTEGER)"
+
+    def test_room_exposes_pending_plan_for_rebuild(self, client, project, proposed_plan):
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert f"activePlanId: {proposed_plan.pk}".encode() in r.content
+
+    def test_room_ignores_settled_plans(self, client, project, proposed_plan):
+        proposed_plan.status = "applied"
+        proposed_plan.save()
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert b"activePlanId: null" in r.content
+
+    def test_approve_delegates_to_runtime(self, client, project, proposed_plan):
+        with mock.patch("agents.runtime.approve_plan", return_value=proposed_plan) as ap:
+            r = client.post(reverse("plan_approve", args=[project.pk, proposed_plan.pk]))
+        assert r.status_code == 200
+        assert ap.call_args.args == (proposed_plan,)
+
+    def test_decisions_conflict_when_not_proposed(self, client, project, proposed_plan):
+        proposed_plan.status = "applied"
+        proposed_plan.save()
+        for name in ("plan_approve", "plan_reject"):
+            r = client.post(reverse(name, args=[project.pk, proposed_plan.pk]))
+            assert r.status_code == 409
+
+    def test_reject_flows_through_runtime(self, client, project, proposed_plan):
+        r = client.post(reverse("plan_reject", args=[project.pk, proposed_plan.pk]))
+        assert r.status_code == 200
+        proposed_plan.refresh_from_db()
+        assert proposed_plan.status == "rejected"
+        assert AuditEntry.objects.filter(action="plan.rejected").exists()
+
+    def test_revise_requires_comment_and_returns_new_turn(self, client, project, proposed_plan):
+        r = client.post(
+            reverse("plan_revise", args=[project.pk, proposed_plan.pk]),
+            data=json.dumps({"comment": "  "}),
+            content_type="application/json",
+        )
+        assert r.status_code == 400
+
+        from agents.models import Turn
+
+        new_turn = Turn.objects.create(project=project, backend="fake", user_message="revised")
+        with mock.patch("agents.runtime.revise_plan", return_value=new_turn) as rv:
+            r = client.post(
+                reverse("plan_revise", args=[project.pk, proposed_plan.pk]),
+                data=json.dumps({"comment": "use TEXT ids"}),
+                content_type="application/json",
+            )
+        assert r.status_code == 200
+        assert r.json()["turn_id"] == new_turn.pk
+        assert rv.call_args.args == (proposed_plan, "use TEXT ids")
+
+    def test_plan_of_another_project_404s(self, client, project, proposed_plan, tmp_path):
+        other_server = Server.objects.create(name="S2", adapter_type="sqlite", dsn=str(tmp_path / "o.db"))
+        other = Project.objects.create(name="Other", server=other_server)
+        r = client.get(reverse("plan_json", args=[other.pk, proposed_plan.pk]))
+        assert r.status_code == 404

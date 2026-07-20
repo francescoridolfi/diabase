@@ -237,3 +237,45 @@ class TestSupabaseBatchedSchema:
         ):
             with pytest.raises(AdapterError, match="429"):
                 a.list_tables()
+
+
+class TestQuerySql:
+    """query_sql: the read-only path — writes rejected by the ENGINE."""
+
+    @pytest.fixture
+    def adapter(self, tmp_path):
+        a = SQLiteAdapter(str(tmp_path / "q.db"))
+        a.execute_sql("CREATE TABLE recipes (id INTEGER PRIMARY KEY, title TEXT)")
+        a.execute_sql("INSERT INTO recipes (title) VALUES ('carbonara')")
+        return a
+
+    def test_select_returns_rows(self, adapter):
+        out = adapter.query_sql("SELECT title FROM recipes")
+        assert out["rows"] == [{"title": "carbonara"}]
+
+    def test_trailing_semicolon_tolerated(self, adapter):
+        assert adapter.query_sql("SELECT 1 AS x;")["rows"] == [{"x": 1}]
+
+    def test_write_rejected_by_the_engine(self, adapter):
+        with pytest.raises(AdapterError, match="Read-only query failed"):
+            adapter.query_sql("DELETE FROM recipes")
+        # nothing was deleted
+        assert adapter.execute_sql("SELECT count(*) AS n FROM recipes")["rows"] == [{"n": 1}]
+
+    def test_multiple_statements_rejected(self, adapter):
+        with pytest.raises(AdapterError, match="exactly one statement"):
+            adapter.query_sql("SELECT 1; DELETE FROM recipes")
+
+    def test_empty_query_rejected(self, adapter):
+        with pytest.raises(AdapterError, match="Empty query"):
+            adapter.query_sql("  ; ")
+
+    def test_supabase_wraps_in_read_only_transaction(self, monkeypatch):
+        monkeypatch.setenv("SUPABASE_ACCESS_TOKEN", "sbp_test")
+        a = SupabaseCloudAdapter(VALID_REF)
+        with mock.patch.object(a, "_query", return_value=[{"policyname": "p1"}]) as q:
+            out = a.query_sql("SELECT policyname FROM pg_policies")
+        assert q.call_args.args == (
+            "begin transaction read only; SELECT policyname FROM pg_policies; rollback",
+        )
+        assert out["rows"] == [{"policyname": "p1"}]
