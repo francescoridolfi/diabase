@@ -9,6 +9,10 @@
 <body>
 <header class="top">
   <a href="{% url 'home' %}" class="logo">◆ dia<em>base</em></a>
+  <nav style="display:flex; gap:1rem; font-size:0.85rem; color:var(--dim)">
+    <a href="{% url 'home' %}">projects</a>
+    <a href="{% url 'connections' %}">connections</a>
+  </nav>
   <div>
     {% if agent.ok %}<span class="pill ok">agent: {{ agent.backend }}</span>
     {% else %}<span class="pill err" title="{{ agent.reason }}">agent unavailable</span>{% endif %}

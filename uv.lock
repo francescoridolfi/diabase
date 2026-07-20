@@ -350,6 +350,7 @@ source = { virtual = "." }
 dependencies = [
     { name = "anthropic" },
     { name = "claude-agent-sdk" },
+    { name = "cryptography" },
     { name = "django" },
     { name = "djangorestframework" },
 ]
@@ -368,6 +369,7 @@ dev = [
 requires-dist = [
     { name = "anthropic", specifier = ">=0.40" },
     { name = "claude-agent-sdk", specifier = ">=0.1" },
+    { name = "cryptography", specifier = ">=49.0.0" },
     { name = "django", specifier = ">=5.1" },
     { name = "djangorestframework", specifier = ">=3.15" },
 ]

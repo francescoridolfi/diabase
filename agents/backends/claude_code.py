@@ -39,6 +39,9 @@ _DONE = object()  # sentinel: the worker thread has nothing left to push
 class ClaudeCodeBackend(AgentBackend):
     name = "claude_code"
 
+    def __init__(self, model: str | None = None):
+        self.model = model or ""
+
     def availability(self) -> tuple[bool, str]:
         if shutil.which("claude"):
             return True, ""
@@ -111,6 +114,7 @@ class ClaudeCodeBackend(AgentBackend):
 
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
+            **({"model": self.model} if self.model else {}),
             mcp_servers={"db": server},
             allowed_tools=[f"mcp__db__{s.name}" for s in specs],
             # Task is denied too: subagents don't inherit the in-process MCP

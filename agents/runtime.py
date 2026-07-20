@@ -44,8 +44,23 @@ BACKENDS: dict[str, type[AgentBackend]] = {
 }
 
 
-def get_backend(name: str | None = None) -> AgentBackend:
-    """Explicit name, or AGENT_BACKEND env, or first available backend."""
+def get_backend(name: str | None = None, project: Project | None = None) -> AgentBackend:
+    """Resolution order: explicit name → the project's configured
+    connection → AGENT_BACKEND env → first available backend.
+
+    A connection carries backend family, model, endpoint and (encrypted)
+    API key — configured once on the Connections page, selected per
+    project."""
+    conn = project.agent_connection if project else None
+    if not name and conn:
+        if conn.backend == "openai_compat":
+            return OpenAICompatBackend(
+                base_url=conn.base_url or None, api_key=conn.api_key or None, model=conn.model or None
+            )
+        if conn.backend == "anthropic_api":
+            return AnthropicAPIBackend(model=conn.model or None, api_key=conn.api_key or None)
+        return ClaudeCodeBackend(model=conn.model or None)
+
     name = name or os.environ.get("AGENT_BACKEND", "").strip()
     if name:
         if name not in BACKENDS:
@@ -88,7 +103,7 @@ def _start(
     exactly this, before execution (sync or threaded) takes over."""
     from .models import Turn
 
-    backend = get_backend(backend_name)
+    backend = get_backend(backend_name, project)
     toolset, history = _prepare(project, backend, autonomy_level)
     turn = Turn.objects.create(
         project=project,

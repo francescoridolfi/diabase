@@ -2,6 +2,49 @@ from django.db import models
 
 from workspaces.models import Project
 
+from . import crypto
+
+
+class AgentConnection(models.Model):
+    """A configured way to reach an LLM: family, model, endpoint, key.
+
+    Configured once on the Connections page, then selected by projects.
+    The API key is encrypted at rest (see agents.crypto) and is never
+    echoed back in full nor written to the audit trail.
+    """
+
+    BACKENDS = [
+        ("claude_code", "Claude Code (subscription)"),
+        ("anthropic_api", "Anthropic API"),
+        ("openai_compat", "OpenAI-compatible endpoint"),
+    ]
+
+    name = models.CharField(max_length=100, unique=True)
+    backend = models.CharField(max_length=20, choices=BACKENDS)
+    model = models.CharField(max_length=100, blank=True)
+    base_url = models.CharField(max_length=300, blank=True)
+    api_key_encrypted = models.TextField(blank=True, editable=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.get_backend_display()})"
+
+    @property
+    def api_key(self) -> str:
+        return crypto.decrypt(self.api_key_encrypted)
+
+    @api_key.setter
+    def api_key(self, value: str):
+        self.api_key_encrypted = crypto.encrypt(value or "")
+
+    @property
+    def masked_key(self) -> str:
+        return crypto.mask(self.api_key)
+
 
 class Turn(models.Model):
     """Operational metadata for one agent execution.

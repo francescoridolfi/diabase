@@ -15,6 +15,15 @@ class Project(models.Model):
         help_text="Appended to Diabase's base prompt: project conventions, constraints, tone.",
     )
     autonomy_level = models.CharField(max_length=20, choices=AUTONOMY_LEVELS, default="full")
+    # which configured connection drives this project's agent; null = auto
+    # (env AGENT_BACKEND or first available). String ref: agents imports us.
+    agent_connection = models.ForeignKey(
+        "agents.AgentConnection",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="projects",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
