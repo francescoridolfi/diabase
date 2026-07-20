@@ -12,15 +12,17 @@
     <h2>Project</h2>
     <form method="post" action="{% url 'project_update' project.pk %}" class="stack">{% csrf_token %}
       <label class="lbl">Autonomy</label>
-      <select name="autonomy_level">
+      <select name="autonomy_level" onchange="this.form.submit()">
         {% for value, label in autonomy_choices %}
         <option value="{{ value }}" {% if project.autonomy_level == value %}selected{% endif %}>{{ label }}</option>
         {% endfor %}
       </select>
-      <label class="lbl">System prompt</label>
-      <textarea name="system_prompt" rows="5" placeholder="Project conventions, constraints, tone…">{{ project.system_prompt }}</textarea>
-      <button>Save</button>
+      <input type="hidden" name="system_prompt" value="{{ project.system_prompt }}">
     </form>
+    <label class="lbl" style="margin-top:0.7rem; display:block">System prompt</label>
+    <div class="prompt-preview" id="prompt-preview" role="button" tabindex="0" aria-label="Edit system prompt">
+      {% if project.system_prompt %}{{ project.system_prompt|truncatechars:160 }}{% else %}Click to set project conventions, constraints, tone…{% endif %}
+    </div>
 
     <h2 style="margin-top:1.2rem">Context files</h2>
     <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Add context files">
@@ -36,24 +38,11 @@
 
     <div class="stack" style="margin-top:0.7rem">
       {% for f in context_files %}
-      <details class="cfile">
-        <summary>
-          <i class="ti ti-file-text" aria-hidden="true"></i>
-          <span class="cfile-name">{{ f.name }}</span>
-          <span class="muted">{{ f.size }} B</span>
-        </summary>
-        <form method="post" action="{% url 'context_file_save' project.pk %}" class="stack">{% csrf_token %}
-          <input type="hidden" name="name" value="{{ f.name }}">
-          <textarea name="content" rows="6">{{ f.content }}</textarea>
-          <div style="display:flex; gap:0.5rem">
-            <button>Save</button>
-            <button class="ghost" form="del-{{ f.pk }}">Delete</button>
-          </div>
-        </form>
-        <form id="del-{{ f.pk }}" method="post" action="{% url 'context_file_delete' project.pk %}">{% csrf_token %}
-          <input type="hidden" name="name" value="{{ f.name }}">
-        </form>
-      </details>
+      <button type="button" class="file-row" data-name="{{ f.name }}">
+        <span aria-hidden="true">▤</span>
+        <span class="fname">{{ f.name }}</span>
+        <span class="muted">{{ f.size }} B</span>
+      </button>
       {% empty %}<p class="muted">No context files yet.</p>{% endfor %}
     </div>
   </div>
@@ -69,10 +58,11 @@
     <div id="chatlog">
       {% for m in chat %}<div class="msg {{ m.role }}" data-md="{% if m.role == 'assistant' %}1{% endif %}">{{ m.content }}</div>{% endfor %}
     </div>
-    <form id="chatform" style="display:flex; gap:0.6rem;">{% csrf_token %}
-      <textarea id="msg" rows="2" placeholder="Ask anything about your backend" style="resize:none" {% if not agent.ok %}disabled{% endif %}></textarea>
-      <button style="align-self:flex-end" {% if not agent.ok %}disabled{% endif %}>Send</button>
+    <form id="chatform" class="chatbox">{% csrf_token %}
+      <textarea id="msg" rows="2" placeholder="Ask anything about your backend" {% if not agent.ok %}disabled{% endif %}></textarea>
+      <button class="send-icon" aria-label="Send (Enter)" title="Send — Enter (Shift+Enter for a new line)" {% if not agent.ok %}disabled{% endif %}>↑</button>
     </form>
+    <p class="chat-hint">Enter to send · Shift+Enter for a new line</p>
     {% if not agent.ok %}<p style="color:var(--write);font-size:0.8rem">{{ agent.reason }}</p>{% endif %}
   </div>
 
@@ -87,23 +77,56 @@
 
 <div class="overlay-veil" id="veil"></div>
 <div class="schema-overlay" id="schema-overlay" role="dialog" aria-modal="true" aria-label="Schema browser">
-  <div class="oring" aria-hidden="true"></div>
-  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+  <div class="panel-header">
     <h2 style="margin:0">Schema</h2>
     <button class="ghost" data-close>Close (Esc)</button>
   </div>
-  <div class="schema-grid" id="schema-grid"><p style="color:var(--dim)">Loading…</p></div>
+  <div class="schema-viewport" id="schema-viewport">
+    <div class="schema-canvas" id="schema-canvas">
+      <div class="schema-grid" id="schema-grid"><p style="color:var(--dim)">Loading…</p></div>
+    </div>
+    <div class="zoom-controls">
+      <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+      <span class="zoom-pct" id="zoom-pct">100%</span>
+      <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+      <button type="button" id="zoom-fit" aria-label="Fit to view">⤢</button>
+    </div>
+  </div>
 </div>
 
 <div class="schema-overlay" id="audit-overlay" role="dialog" aria-modal="true" aria-label="Audit log">
-  <div class="oring" aria-hidden="true"></div>
-  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+  <div class="panel-header">
     <h2 style="margin:0">Audit log</h2>
     <button class="ghost" data-close>Close (Esc)</button>
   </div>
-  <div id="audit-log-list"></div>
-  <button class="ghost" id="audit-more" style="margin-top:0.8rem; display:none">Load more</button>
+  <div class="panel-scroll">
+    <div id="audit-log-list"></div>
+    <button class="ghost" id="audit-more" style="margin-top:0.8rem; display:none">Load more</button>
+  </div>
 </div>
+
+<div class="schema-overlay" id="editor-overlay" role="dialog" aria-modal="true" aria-label="Context editor">
+  <div class="panel-header">
+    <div style="display:flex; align-items:baseline; gap:0.8rem; min-width:0">
+      <h2 style="margin:0" id="editor-title">Edit</h2>
+      <span class="editor-meta" id="editor-meta"></span>
+    </div>
+    <button class="ghost" data-close>Close (Esc)</button>
+  </div>
+  <div class="editor-split">
+    <div class="editor-code">
+      <pre id="editor-gutter" aria-hidden="true">1</pre>
+      <textarea id="editor-src" spellcheck="false" placeholder="Markdown or plain text"></textarea>
+    </div>
+    <div class="editor-preview msg assistant" id="editor-preview" style="max-width:100%; align-self:stretch"></div>
+  </div>
+  <div class="editor-footer">
+    <button class="ghost" id="editor-delete" style="color:var(--danger)">Delete file</button>
+    <button id="editor-save">Save</button>
+  </div>
+</div>
+
+{{ project.system_prompt|json_script:"sysprompt-data" }}
 
 <script>
   window.DIABASE = {
@@ -113,6 +136,9 @@
     auditUrl: "{% url 'audit_partial' project.pk %}",
     auditLogUrl: "{% url 'audit_log' project.pk %}",
     contextFileSaveUrl: "{% url 'context_file_save' project.pk %}",
+    contextFileGetUrl: "{% url 'context_file_json' project.pk %}",
+    contextFileDeleteUrl: "{% url 'context_file_delete' project.pk %}",
+    projectUpdateUrl: "{% url 'project_update' project.pk %}",
     csrfToken: "{{ csrf_token }}",
     activeTurnId: {{ active_turn_id|default:"null" }},
   };

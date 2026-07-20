@@ -118,3 +118,53 @@ class TestServices:
     def test_size_limit_enforced(self, project):
         with pytest.raises(ContextFileTooLarge):
             save_context_file(project, "huge.md", "z" * (ContextFile.MAX_SIZE + 1))
+
+
+class TestChunkedReadAndSearch:
+    def make_toolset(self, project):
+        adapter = AuditedAdapter(SQLiteAdapter(project.server.dsn), project=project, actor="agent-x")
+        return BoundToolset(adapter=adapter, policy=AutonomyPolicy("full"), project=project, actor="agent-x")
+
+    def test_read_returns_a_window_with_cursor_info(self, project):
+        content = "\n".join(f"line {i}" for i in range(1, 501))
+        save_context_file(project, "big.md", content)
+        ts = self.make_toolset(project)
+        out = ts.execute("read_context_file", {"name": "big.md", "offset": 100, "limit": 50})
+        assert out["content"].splitlines()[0] == "line 100"
+        assert out["returned_lines"] == 50
+        assert out["total_lines"] == 500
+        assert out["has_more"] is True
+        tail = ts.execute("read_context_file", {"name": "big.md", "offset": 481, "limit": 50})
+        assert tail["returned_lines"] == 20
+        assert tail["has_more"] is False
+
+    def test_read_defaults_are_bounded(self, project):
+        save_context_file(project, "small.md", "just one line")
+        out = self.make_toolset(project).execute("read_context_file", {"name": "small.md"})
+        assert out["content"] == "just one line"
+        assert out["has_more"] is False
+
+    def test_search_finds_matches_across_files(self, project):
+        save_context_file(project, "a.md", "# Users\nThe users table stores accounts.\n")
+        save_context_file(project, "b.md", "# Payments\nEach payment links a user to a plan.\n")
+        ts = self.make_toolset(project)
+        out = ts.execute("search_context_files", {"query": "user"})
+        files = {m["file"] for m in out["matches"]}
+        assert files == {"a.md", "b.md"}
+        assert all("line" in m and "text" in m for m in out["matches"])
+        assert out["truncated"] is False
+        assert AuditEntry.objects.filter(action="search_context_files").exists()
+
+    def test_search_caps_matches(self, project):
+        save_context_file(project, "spam.md", "\n".join("needle here" for _ in range(100)))
+        out = self.make_toolset(project).execute("search_context_files", {"query": "needle"})
+        assert len(out["matches"]) == 40
+        assert out["truncated"] is True
+
+    def test_index_outline_lists_headings_with_line_numbers(self, project):
+        big = "# Intro\n" + ("filler\n" * 300) + "## Data model\n" + ("filler\n" * 300) + "## API\n"
+        save_context_file(project, "domain.md", big)
+        block = build_context_block(project)
+        assert "# Intro (line 1)" in block
+        assert "## Data model (line 302)" in block
+        assert "search_context_files" in block

@@ -141,3 +141,99 @@ class TestSQLiteForeignKeys:
         cols = {c["name"]: c for c in a.describe_table("reviews")}
         assert cols["recipe_id"]["references"] == {"table": "recipes", "column": "id"}
         assert cols["rating"]["references"] is None
+
+
+class TestSupabaseBatchedSchema:
+    def test_whole_schema_in_four_api_calls(self, monkeypatch):
+        monkeypatch.setenv("SUPABASE_ACCESS_TOKEN", "sbp_test")
+        a = SupabaseCloudAdapter(VALID_REF)
+        responses = [
+            [{"table_name": "recipes"}, {"table_name": "reviews"}],
+            [
+                {
+                    "table_name": "recipes",
+                    "column_name": "id",
+                    "data_type": "integer",
+                    "is_nullable": "NO",
+                    "column_default": None,
+                },
+                {
+                    "table_name": "reviews",
+                    "column_name": "id",
+                    "data_type": "integer",
+                    "is_nullable": "NO",
+                    "column_default": None,
+                },
+                {
+                    "table_name": "reviews",
+                    "column_name": "recipe_id",
+                    "data_type": "integer",
+                    "is_nullable": "NO",
+                    "column_default": None,
+                },
+            ],
+            [{"table_name": "recipes", "column_name": "id"}, {"table_name": "reviews", "column_name": "id"}],
+            [
+                {
+                    "table_name": "reviews",
+                    "column_name": "recipe_id",
+                    "ref_table": "recipes",
+                    "ref_column": "id",
+                }
+            ],
+        ]
+        with mock.patch.object(a, "_query", side_effect=responses) as q:
+            schema = a.get_schema()
+        assert q.call_count == 4  # NOT 1 + 3 per table
+        assert set(schema) == {"recipes", "reviews"}
+        by_name = {c["name"]: c for c in schema["reviews"]}
+        assert by_name["id"]["primary_key"] is True
+        assert by_name["recipe_id"]["references"] == {"table": "recipes", "column": "id"}
+        assert schema["recipes"][0]["references"] is None
+
+    def test_429_is_retried_with_backoff(self, monkeypatch):
+        import io
+        import urllib.error
+
+        monkeypatch.setenv("SUPABASE_ACCESS_TOKEN", "sbp_test")
+        a = SupabaseCloudAdapter(VALID_REF)
+        throttle = urllib.error.HTTPError(
+            url="x",
+            code=429,
+            msg="too many",
+            hdrs={"Retry-After": "0"},
+            fp=io.BytesIO(b'{"message": "ThrottlerException"}'),
+        )
+        ok = mock.MagicMock(
+            __enter__=lambda s: mock.MagicMock(read=lambda: b'[{"table_name": "t"}]'),
+            __exit__=lambda s, *args: False,
+        )
+        with (
+            mock.patch("urllib.request.urlopen", side_effect=[throttle, ok]),
+            mock.patch("time.sleep") as slept,
+        ):
+            assert a.list_tables() == ["t"]
+        slept.assert_called_once()
+
+    def test_429_gives_up_after_retries(self, monkeypatch):
+        import io
+        import urllib.error
+
+        monkeypatch.setenv("SUPABASE_ACCESS_TOKEN", "sbp_test")
+        a = SupabaseCloudAdapter(VALID_REF)
+
+        def make_429():
+            return urllib.error.HTTPError(
+                url="x",
+                code=429,
+                msg="too many",
+                hdrs={},
+                fp=io.BytesIO(b'{"message": "ThrottlerException"}'),
+            )
+
+        with (
+            mock.patch("urllib.request.urlopen", side_effect=[make_429(), make_429(), make_429()]),
+            mock.patch("time.sleep"),
+        ):
+            with pytest.raises(AdapterError, match="429"):
+                a.list_tables()

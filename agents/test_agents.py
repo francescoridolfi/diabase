@@ -65,6 +65,7 @@ class TestBoundToolset:
             "list_tables",
             "describe_table",
             "read_context_file",
+            "search_context_files",
         ]
 
     def test_denied_call_raises_even_if_attempted(self, project):
@@ -195,6 +196,7 @@ class TestAnthropicAPIBackend:
             "describe_table",
             "execute_sql",
             "read_context_file",
+            "search_context_files",
         ]
 
     def test_availability(self, monkeypatch):

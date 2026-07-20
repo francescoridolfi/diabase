@@ -176,6 +176,15 @@ def context_file_save(request, pk):
     return redirect("project_room", pk=pk)
 
 
+def context_file_json(request, pk):
+    """One context file's full content, for the editor modal."""
+    project = get_object_or_404(Project, pk=pk)
+    file = project.context_files.filter(name=request.GET.get("name", "")).first()
+    if file is None:
+        return JsonResponse({"error": "No such file"}, status=404)
+    return JsonResponse({"name": file.name, "content": file.content, "size": file.size})
+
+
 @require_POST
 def context_file_delete(request, pk):
     from workspaces.services import delete_context_file

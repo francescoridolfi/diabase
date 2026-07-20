@@ -14,5 +14,6 @@ urlpatterns = [
     path("projects/<int:pk>/audit/log/", views.audit_log, name="audit_log"),
     path("projects/<int:pk>/settings/", views.project_update, name="project_update"),
     path("projects/<int:pk>/files/save/", views.context_file_save, name="context_file_save"),
+    path("projects/<int:pk>/files/get/", views.context_file_json, name="context_file_json"),
     path("projects/<int:pk>/files/delete/", views.context_file_delete, name="context_file_delete"),
 ]

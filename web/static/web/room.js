@@ -41,6 +41,14 @@
       const flush = () => {
         if (!buf.length) return;
         if (kind === "p") out.push("<p>" + buf.map(inline).join("<br>") + "</p>");
+        else if (kind === "bq") out.push("<blockquote>" + buf.map(inline).join("<br>") + "</blockquote>");
+        else if (kind === "h") {
+          for (const l of buf) {
+            const m = l.match(/^(#{1,6})\s+(.*)/);
+            const level = Math.min(m[1].length, 4);
+            out.push(`<h${level}>` + inline(m[2]) + `</h${level}>`);
+          }
+        } else if (kind === "hr") out.push("<hr>");
         else if (kind === "table") {
           const rows = buf
             .filter((l) => !/^\s*\|[\s:|-]+\|?\s*$/.test(l))
@@ -56,9 +64,14 @@
         buf = [];
       };
       for (const l of lines) {
-        const k = l.trim().startsWith("|") ? "table" : UL.test(l) ? "ul" : OL.test(l) ? "ol" : "p";
+        const t = l.trim();
+        const k = /^#{1,6}\s/.test(t) ? "h"
+          : /^([-*_])\1{2,}$/.test(t) ? "hr"
+          : t.startsWith("|") ? "table"
+          : t.startsWith("> ") || t === ">" ? "bq"
+          : UL.test(l) ? "ul" : OL.test(l) ? "ol" : "p";
         if (k !== kind) { flush(); kind = k; }
-        buf.push(k === "ul" ? l.replace(UL, "") : k === "ol" ? l.replace(OL, "") : l);
+        buf.push(k === "ul" ? l.replace(UL, "") : k === "ol" ? l.replace(OL, "") : k === "bq" ? t.replace(/^>\s?/, "") : k === "h" ? t : l);
       }
       flush();
     }
@@ -206,11 +219,160 @@
     if (r.ok) document.getElementById("timeline").innerHTML = await r.text();
   }
 
-  /* ---------- schema overlay ---------- */
-  function renderSchema(schema) {
-    const names = Object.keys(schema);
-    grid.innerHTML = names.length ? "" : '<p style="color:var(--dim)">No tables yet — ask the agent to create one.</p>';
-    names.forEach((t, i) => {
+  /* ---------- schema overlay: auto-layered dependency graph on a pan/zoom canvas ---------- */
+  const viewport = document.getElementById("schema-viewport");
+  const canvas = document.getElementById("schema-canvas");
+  const CARD_W = 252, GAP_X = 96, GAP_Y = 22;
+
+  /* Rank each table by dependency depth: a table with no FKs of its own is
+     rank 0 (a "leaf" other tables point at); a table that references others
+     is 1 + the deepest rank among its targets. Cycle-safe via a visiting set
+     (a back-edge just doesn't extend the rank further). */
+  function computeRanks(tables, edges) {
+    const outgoing = {};
+    tables.forEach((t) => (outgoing[t] = []));
+    edges.forEach((e) => { if (outgoing[e.from]) outgoing[e.from].push(e.to); });
+    const rank = {}, visiting = new Set();
+    function rankOf(t) {
+      if (rank[t] !== undefined) return rank[t];
+      if (visiting.has(t)) return 0;
+      visiting.add(t);
+      let r = 0;
+      for (const to of outgoing[t]) if (to !== t) r = Math.max(r, 1 + rankOf(to));
+      visiting.delete(t);
+      return (rank[t] = r);
+    }
+    tables.forEach(rankOf);
+    return rank;
+  }
+
+  /* Barycenter crossing reduction: a few alternating sweeps, each reordering
+     a layer by the average position of its neighbors in the layer just
+     fixed. Cheap and good enough for schema-sized graphs. */
+  function reduceCrossings(layers, colKeys, edges) {
+    const neighborsOf = {};
+    edges.forEach((e) => {
+      (neighborsOf[e.from] ??= []).push(e.to);
+      (neighborsOf[e.to] ??= []).push(e.from);
+    });
+    const posIndex = {};
+    const sync = () => colKeys.forEach((c) => layers[c].forEach((t, i) => (posIndex[t] = i)));
+    sync();
+    function sweep(order) {
+      for (const c of order) {
+        if (layers[c].length < 2) continue;
+        const scored = layers[c].map((t) => {
+          const positions = (neighborsOf[t] || []).map((n) => posIndex[n]).filter((p) => p !== undefined);
+          const bc = positions.length ? positions.reduce((a, b) => a + b, 0) / positions.length : posIndex[t];
+          return { t, bc };
+        });
+        scored.sort((a, b) => a.bc - b.bc);
+        layers[c] = scored.map((s) => s.t);
+        layers[c].forEach((t, i) => (posIndex[t] = i));
+      }
+    }
+    for (let i = 0; i < 3; i++) { sweep(colKeys); sweep([...colKeys].reverse()); }
+  }
+
+  /* Hub-weighted layout: when the graph has a gravitational center (a
+     table many others reference, e.g. a profiles/users table), the
+     layered left-to-right layout degenerates into one endless column.
+     Here the heaviest table (most incoming FKs) sits in the CENTER and
+     its satellites spread to both sides by BFS distance, greedily
+     balanced by subtree size. Chain-like graphs (no real hub) keep the
+     layered flow, which reads better for them. */
+  function hubLayout(tables, edges, indeg) {
+    const und = {};
+    tables.forEach((t) => (und[t] = new Set()));
+    edges.forEach((e) => { und[e.from].add(e.to); und[e.to].add(e.from); });
+
+    const hubWeight = Math.max(...tables.map((t) => indeg[t] || 0));
+    const hubs = tables.filter((t) => (indeg[t] || 0) === hubWeight);
+
+    const dist = {}, parent = {};
+    const queue = [...hubs];
+    hubs.forEach((h) => (dist[h] = 0));
+    while (queue.length) {
+      const t = queue.shift();
+      for (const n of und[t]) {
+        if (dist[n] === undefined) { dist[n] = dist[t] + 1; parent[n] = t; queue.push(n); }
+      }
+    }
+    const reachedMax = Math.max(...Object.values(dist));
+    const isolated = tables.filter((t) => dist[t] === undefined);
+    isolated.forEach((t) => (dist[t] = reachedMax + 1));
+
+    // subtree sizes over the BFS tree, to balance the two sides by mass
+    const subtree = {};
+    [...tables].sort((a, b) => (dist[b] || 0) - (dist[a] || 0)).forEach((t) => {
+      subtree[t] = 1 + [...(und[t] || [])].filter((n) => parent[n] === t).reduce((s, n) => s + (subtree[n] || 0), 0);
+    });
+
+    const side = {};
+    hubs.forEach((h) => (side[h] = 0));
+    let leftLoad = 0, rightLoad = 0;
+    const firstRing = tables.filter((t) => dist[t] === 1).sort((a, b) => subtree[b] - subtree[a]);
+    for (const t of firstRing) {
+      side[t] = leftLoad <= rightLoad ? -1 : 1;
+      if (side[t] === -1) leftLoad += subtree[t]; else rightLoad += subtree[t];
+    }
+    for (const t of tables) {
+      if (side[t] !== undefined) continue;
+      let a = t;
+      while (parent[a] !== undefined && side[a] === undefined) a = parent[a];
+      side[t] = side[a] ?? (leftLoad <= rightLoad ? ((leftLoad += 1), -1) : ((rightLoad += 1), 1));
+    }
+
+    const layers = {};
+    tables.forEach((t) => {
+      const col = dist[t] * (side[t] || 0);
+      (layers[col] ??= []).push(t);
+    });
+    const colKeys = Object.keys(layers).map(Number).sort((a, b) => a - b);
+    return { colKeys, layers };
+  }
+
+  function computeLayout(schema) {
+    const tables = Object.keys(schema);
+    const edges = [];
+    for (const [t, cols] of Object.entries(schema)) {
+      for (const c of cols) {
+        if (c.references && schema[c.references.table]) edges.push({ from: t, to: c.references.table, col: c.name });
+      }
+    }
+    const indeg = {};
+    edges.forEach((e) => (indeg[e.to] = (indeg[e.to] || 0) + 1));
+    const maxIndeg = Math.max(0, ...Object.values(indeg));
+
+    let colKeys, layers;
+    if (maxIndeg >= 3 && tables.length >= 5) {
+      ({ colKeys, layers } = hubLayout(tables, edges, indeg));
+    } else {
+      const rank = computeRanks(tables, edges);
+      const maxRank = tables.length ? Math.max(...tables.map((t) => rank[t])) : 0;
+      layers = {};
+      const keys = [...Array(maxRank + 1).keys()];
+      keys.forEach((c) => (layers[c] = []));
+      tables.forEach((t) => layers[maxRank - rank[t]].push(t));
+      colKeys = keys;
+    }
+    reduceCrossings(layers, colKeys, edges);
+    return { tables, edges, colKeys, layers };
+  }
+
+  function renderSchema(schema, shouldFit) {
+    const { tables, edges, colKeys, layers } = computeLayout(schema);
+    grid.querySelectorAll(".table-card, .fk-svg").forEach((el) => el.remove());
+    if (!tables.length) {
+      grid.innerHTML = '<p style="color:var(--dim)">No tables yet — ask the agent to create one.</p>';
+      knownTables = new Set();
+      canvas.style.width = canvas.style.height = "";
+      return;
+    }
+    grid.querySelector("p")?.remove();
+
+    const cardsByTable = {};
+    tables.forEach((t) => {
       const rows = schema[t]
         .map((c) => {
           const fk = c.references
@@ -220,82 +382,165 @@
         })
         .join("");
       const card = document.createElement("div");
-      card.className = "table-card" + (knownTables && !knownTables.has(t) ? " new" : "");
+      card.className = "table-card measuring" + (knownTables && !knownTables.has(t) ? " new" : "");
       card.dataset.table = t;
-      card.style.animationDelay = i * 45 + "ms";
-      card.innerHTML = `<h3>▦ ${esc(t)}</h3><table>${rows}</table>`;
+      card.style.left = card.style.top = "0px";
+      card.innerHTML = `<h3 title="${esc(t)}">▦ ${esc(t)}</h3><table>${rows}</table>`;
       grid.appendChild(card);
+      cardsByTable[t] = card;
     });
-    knownTables = new Set(names);
-    /* edges appear after the cards' entrance animation settles */
-    setTimeout(() => drawFkEdges(schema), 480);
+
+    // measure pass (fixed width already applied via CSS), then place by
+    // column — colKeys may be signed (hub layout), so x comes from the
+    // key's ORDER, not its value; columns are vertically centered so the
+    // hub sits at the graph's middle instead of hanging from the top
+    const canvasW = colKeys.length * (CARD_W + GAP_X) - GAP_X;
+    const colHeights = colKeys.map((c) =>
+      layers[c].reduce((h, t) => h + cardsByTable[t].offsetHeight + GAP_Y, -GAP_Y)
+    );
+    const canvasH = Math.max(...colHeights);
+    colKeys.forEach((c, ci) => {
+      let y = (canvasH - colHeights[ci]) / 2;
+      layers[c].forEach((t) => {
+        const card = cardsByTable[t];
+        card.style.left = ci * (CARD_W + GAP_X) + "px";
+        card.style.top = y + "px";
+        y += card.offsetHeight + GAP_Y;
+      });
+    });
+    tables.forEach((t, i) => {
+      cardsByTable[t].classList.remove("measuring");
+      cardsByTable[t].style.animationDelay = i * 35 + "ms";
+    });
+    canvas.style.width = canvasW + "px";
+    canvas.style.height = canvasH + "px";
+
+    knownTables = new Set(tables);
+    drawFkEdges(edges, cardsByTable);
+    if (shouldFit) fitToView(canvasW, canvasH);
   }
 
   /* ---------- FK dependency arrows: from the referencing field to its table ---------- */
-  /* offset-based coordinates: immune to the overlay's scale transform */
-  function offsetWithin(el, ancestor) {
-    let x = 0, y = 0;
-    while (el && el !== ancestor) { x += el.offsetLeft; y += el.offsetTop; el = el.offsetParent; }
-    return { x, y };
-  }
-
-  function drawFkEdges(schema) {
-    grid.querySelector(".fk-svg")?.remove();
+  function drawFkEdges(edges, cardsByTable) {
+    if (!edges.length) return;
     const svgNS = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(svgNS, "svg");
     svg.setAttribute("class", "fk-svg");
-    svg.setAttribute("width", grid.scrollWidth);
-    svg.setAttribute("height", grid.scrollHeight);
+    svg.setAttribute("width", canvas.offsetWidth);
+    svg.setAttribute("height", canvas.offsetHeight);
     svg.innerHTML =
       '<defs><marker id="fkarrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">' +
       '<path d="M0,0 L7,3.5 L0,7 z" fill="var(--aura-2)"/></marker></defs>';
-    let edges = 0;
-    for (const [t, cols] of Object.entries(schema)) {
-      for (const c of cols) {
-        if (!c.references) continue;
-        const srcRow = grid.querySelector(`.table-card[data-table="${CSS.escape(t)}"] tr[data-col="${CSS.escape(c.name)}"]`);
-        const dstCard = grid.querySelector(`.table-card[data-table="${CSS.escape(c.references.table)}"]`);
-        if (!srcRow || !dstCard) continue;
-        const so = offsetWithin(srcRow, grid);
-        const doff = { x: dstCard.offsetLeft, y: dstCard.offsetTop };
-        const sameColumn = Math.abs(doff.x - so.x) < 40;
-        const sy = so.y + srcRow.offsetHeight / 2;
-        const dy = doff.y + 16;
-        let sx, dx, bend;
-        if (sameColumn) {
-          /* stacked cards: leave from the right edge, arc outside, come back */
-          sx = so.x + srcRow.offsetWidth;
-          dx = doff.x + dstCard.offsetWidth;
-          bend = 52;
-          var d = `M ${sx} ${sy} C ${sx + bend} ${sy}, ${dx + bend} ${dy}, ${dx} ${dy}`;
-        } else {
-          const goLeft = doff.x < so.x;
-          sx = goLeft ? so.x : so.x + srcRow.offsetWidth;
-          dx = goLeft ? doff.x + dstCard.offsetWidth : doff.x;
-          bend = Math.max(36, Math.abs(dx - sx) * 0.35) * (goLeft ? -1 : 1);
-          d = `M ${sx} ${sy} C ${sx + bend} ${sy}, ${dx - bend} ${dy}, ${dx} ${dy}`;
-        }
-        const path = document.createElementNS(svgNS, "path");
-        path.setAttribute("d", d);
-        path.setAttribute("class", "fk-edge");
-        path.setAttribute("marker-end", "url(#fkarrow)");
-        svg.appendChild(path);
-        edges++;
+    for (const e of edges) {
+      const srcCard = cardsByTable[e.from], dstCard = cardsByTable[e.to];
+      const srcRow = srcCard?.querySelector(`tr[data-col="${CSS.escape(e.col)}"]`);
+      if (!srcRow || !dstCard) continue;
+      const sy = srcCard.offsetTop + srcRow.offsetTop + srcRow.offsetHeight / 2;
+      const dy = dstCard.offsetTop + 16;
+      const gap = dstCard.offsetLeft - srcCard.offsetLeft;
+      let d;
+      if (gap > 20) {
+        // rightward: out of the row's right edge, into the target's left
+        const sx = srcCard.offsetLeft + srcCard.offsetWidth, dx = dstCard.offsetLeft;
+        const bend = Math.max(36, (dx - sx) * 0.4);
+        d = `M ${sx} ${sy} C ${sx + bend} ${sy}, ${dx - bend} ${dy}, ${dx} ${dy}`;
+      } else if (gap < -20) {
+        // leftward (hub layout, satellites on the right side)
+        const sx = srcCard.offsetLeft, dx = dstCard.offsetLeft + dstCard.offsetWidth;
+        const bend = Math.max(36, (sx - dx) * 0.4);
+        d = `M ${sx} ${sy} C ${sx - bend} ${sy}, ${dx + bend} ${dy}, ${dx} ${dy}`;
+      } else {
+        // same column: arc out on the right and back in
+        const sx = srcCard.offsetLeft + srcCard.offsetWidth, dx = dstCard.offsetLeft + dstCard.offsetWidth;
+        d = `M ${sx} ${sy} C ${sx + 56} ${sy}, ${dx + 56} ${dy}, ${dx} ${dy}`;
       }
+      const path = document.createElementNS(svgNS, "path");
+      path.setAttribute("d", d);
+      path.setAttribute("class", "fk-edge");
+      path.setAttribute("marker-end", "url(#fkarrow)");
+      svg.appendChild(path);
     }
-    if (edges) grid.appendChild(svg);
+    grid.appendChild(svg);
   }
-  window.addEventListener("resize", () => {
-    if (document.body.classList.contains("overlay-open")) loadSchema();
+
+  /* ---------- pan & zoom ---------- */
+  const zoomPct = document.getElementById("zoom-pct");
+  const view = { x: 0, y: 0, scale: 1 };
+  const MIN_ZOOM = 0.25, MAX_ZOOM = 2.5;
+  function applyView() {
+    canvas.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+    zoomPct.textContent = Math.round(view.scale * 100) + "%";
+  }
+  function zoomAt(px, py, factor) {
+    const newScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, view.scale * factor));
+    const worldX = (px - view.x) / view.scale, worldY = (py - view.y) / view.scale;
+    view.scale = newScale;
+    view.x = px - worldX * newScale;
+    view.y = py - worldY * newScale;
+    applyView();
+  }
+  function fitToView(canvasW, canvasH) {
+    if (!canvasW || !canvasH) return;
+    const vw = viewport.clientWidth, vh = viewport.clientHeight;
+    view.scale = Math.min(MAX_ZOOM, Math.min(vw / canvasW, vh / canvasH) * 0.92, 1);
+    view.x = (vw - canvasW * view.scale) / 2;
+    view.y = (vh - canvasH * view.scale) / 2;
+    applyView();
+  }
+
+  let panning = false, panStart = null;
+  viewport.addEventListener("mousedown", (e) => {
+    if (e.button !== 0 || e.target.closest(".zoom-controls")) return;
+    panning = true;
+    panStart = { mx: e.clientX, my: e.clientY, vx: view.x, vy: view.y };
+    viewport.classList.add("panning");
   });
-  async function loadSchema() {
+  window.addEventListener("mousemove", (e) => {
+    if (!panning) return;
+    view.x = panStart.vx + (e.clientX - panStart.mx);
+    view.y = panStart.vy + (e.clientY - panStart.my);
+    applyView();
+  });
+  window.addEventListener("mouseup", () => { panning = false; viewport.classList.remove("panning"); });
+  viewport.addEventListener(
+    "wheel",
+    (e) => {
+      e.preventDefault();
+      const rect = viewport.getBoundingClientRect();
+      const px = e.clientX - rect.left, py = e.clientY - rect.top;
+      if (e.ctrlKey || e.metaKey) {
+        zoomAt(px, py, Math.exp(-e.deltaY * 0.012));
+      } else {
+        view.x -= e.deltaX;
+        view.y -= e.deltaY;
+        applyView();
+      }
+    },
+    { passive: false }
+  );
+  document.getElementById("zoom-in").addEventListener("click", () => {
+    zoomAt(viewport.clientWidth / 2, viewport.clientHeight / 2, 1.25);
+  });
+  document.getElementById("zoom-out").addEventListener("click", () => {
+    zoomAt(viewport.clientWidth / 2, viewport.clientHeight / 2, 0.8);
+  });
+  document.getElementById("zoom-fit").addEventListener("click", () => {
+    fitToView(parseFloat(canvas.style.width) || 0, parseFloat(canvas.style.height) || 0);
+  });
+
+  window.addEventListener("resize", () => {
+    if (document.body.classList.contains("overlay-open")) loadSchema(true);
+  });
+  async function loadSchema(shouldFit) {
     const r = await fetch(DIABASE.schemaUrl);
     const data = await r.json();
     if (data.error) grid.innerHTML = `<p style="color:var(--danger)">${esc(data.error)}</p>`;
-    else renderSchema(data.schema);
+    else renderSchema(data.schema, shouldFit);
   }
   function refreshSchemaIfOpen() {
-    if (overlay.classList.contains("open")) loadSchema();
+    // a background refresh (e.g. a turn just completed) must not yank the
+    // camera away from wherever the user has it zoomed/panned to
+    if (overlay.classList.contains("open")) loadSchema(false);
     else knownTables = null; /* forget diff state when closed */
   }
   function openPanel(panel) {
@@ -313,7 +558,7 @@
     overlay.style.setProperty("--orb-x", r.left + r.width / 2 + "px");
     overlay.style.setProperty("--orb-y", r.top + r.height / 2 + "px");
     openPanel(overlay);
-    loadSchema();
+    loadSchema(true);
   }
   orb.addEventListener("click", openSchemaPanel);
   orb.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openSchemaPanel(); } });
@@ -343,6 +588,77 @@
     loadAuditPage(true);
   });
   auditMore.addEventListener("click", () => loadAuditPage(false));
+
+  /* ---------- context editor modal: source | rendered preview ---------- */
+  const editorOverlay = document.getElementById("editor-overlay");
+  const editorTitle = document.getElementById("editor-title");
+  const editorMeta = document.getElementById("editor-meta");
+  const editorSrc = document.getElementById("editor-src");
+  const editorPreview = document.getElementById("editor-preview");
+  const editorDelete = document.getElementById("editor-delete");
+  let editorMode = null; // {kind: "file", name} | {kind: "prompt"}
+
+  const editorGutter = document.getElementById("editor-gutter");
+  function updateEditorPreview() {
+    editorPreview.innerHTML = md(editorSrc.value) || '<p style="color:var(--dim)">Nothing to preview yet.</p>';
+    const bytes = new Blob([editorSrc.value]).size;
+    const lines = editorSrc.value ? editorSrc.value.split("\n").length : 1;
+    editorMeta.textContent = `${lines} lines · ${bytes} B`;
+    editorGutter.textContent = Array.from({ length: lines }, (_, i) => i + 1).join("\n");
+    editorGutter.scrollTop = editorSrc.scrollTop;
+  }
+  editorSrc.addEventListener("input", updateEditorPreview);
+  editorSrc.addEventListener("scroll", () => (editorGutter.scrollTop = editorSrc.scrollTop));
+
+  function openEditor(mode, content) {
+    editorMode = mode;
+    editorTitle.textContent = mode.kind === "prompt" ? "System prompt" : mode.name;
+    editorDelete.style.display = mode.kind === "file" ? "" : "none";
+    editorSrc.value = content;
+    updateEditorPreview();
+    openPanel(editorOverlay);
+    editorSrc.focus();
+    editorSrc.setSelectionRange(0, 0);
+    editorSrc.scrollTop = 0;
+    editorGutter.scrollTop = 0;
+    editorPreview.scrollTop = 0;
+  }
+
+  document.querySelectorAll(".file-row").forEach((row) =>
+    row.addEventListener("click", async () => {
+      const r = await fetch(`${DIABASE.contextFileGetUrl}?name=${encodeURIComponent(row.dataset.name)}`);
+      const data = await r.json();
+      if (!r.ok) return;
+      openEditor({ kind: "file", name: data.name }, data.content);
+    })
+  );
+  const promptPreview = document.getElementById("prompt-preview");
+  const sysPrompt = JSON.parse(document.getElementById("sysprompt-data").textContent);
+  const openPromptEditor = () => openEditor({ kind: "prompt" }, sysPrompt);
+  promptPreview.addEventListener("click", openPromptEditor);
+  promptPreview.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openPromptEditor(); }
+  });
+
+  document.getElementById("editor-save").addEventListener("click", async () => {
+    if (!editorMode) return;
+    const body =
+      editorMode.kind === "prompt"
+        ? new URLSearchParams({ system_prompt: editorSrc.value, csrfmiddlewaretoken: csrf() })
+        : new URLSearchParams({ name: editorMode.name, content: editorSrc.value, csrfmiddlewaretoken: csrf() });
+    const url = editorMode.kind === "prompt" ? DIABASE.projectUpdateUrl : DIABASE.contextFileSaveUrl;
+    await fetch(url, { method: "POST", body });
+    window.location.reload();
+  });
+  editorDelete.addEventListener("click", async () => {
+    if (!editorMode || editorMode.kind !== "file") return;
+    if (!window.confirm(`Delete ${editorMode.name}?`)) return;
+    await fetch(DIABASE.contextFileDeleteUrl, {
+      method: "POST",
+      body: new URLSearchParams({ name: editorMode.name, csrfmiddlewaretoken: csrf() }),
+    });
+    window.location.reload();
+  });
 
   /* ---------- context files: drag & drop uploader ---------- */
   const dropzone = document.getElementById("dropzone");

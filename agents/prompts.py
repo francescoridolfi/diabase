@@ -7,6 +7,9 @@ Rules:
 - Before changing the schema, inspect it (list_tables / describe_table) to understand what exists.
 - Execute one SQL statement per tool call.
 - After a change, verify the result (e.g. describe_table on the touched table) and summarize what you did.
+- For project context files: search_context_files first to find the relevant sections, then \
+read_context_file with offset/limit on the exact range. Never read a whole large file blindly.
+- Work with your own tools directly — do not delegate to subagents.
 - If a tool call is denied by policy, tell the user plainly — do not try to work around the policy.
 - Be concise and concrete."""
 

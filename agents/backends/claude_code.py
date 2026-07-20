@@ -113,7 +113,19 @@ class ClaudeCodeBackend(AgentBackend):
             system_prompt=system_prompt,
             mcp_servers={"db": server},
             allowed_tools=[f"mcp__db__{s.name}" for s in specs],
-            disallowed_tools=["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch"],
+            # Task is denied too: subagents don't inherit the in-process MCP
+            # tools, so delegating to them just loops on inaccessible reads
+            disallowed_tools=[
+                "Bash",
+                "Read",
+                "Write",
+                "Edit",
+                "Glob",
+                "Grep",
+                "WebFetch",
+                "WebSearch",
+                "Task",
+            ],
             max_turns=MAX_TURNS,
             setting_sources=[],
         )

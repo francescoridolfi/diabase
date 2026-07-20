@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 import urllib.error
 import urllib.request
 
@@ -188,6 +189,8 @@ class SupabaseCloudAdapter(BaseAdapter):
             )
         return ref
 
+    MAX_429_RETRIES = 2
+
     def _query(self, sql: str):
         ref = self.ref  # validates the project ref before anything else
         token = os.environ.get("SUPABASE_ACCESS_TOKEN", "").strip()
@@ -195,29 +198,42 @@ class SupabaseCloudAdapter(BaseAdapter):
             raise AdapterError(
                 "SUPABASE_ACCESS_TOKEN is not set: a Supabase Personal Access Token is required"
             )
-        req = urllib.request.Request(  # noqa: S310 — fixed https host
-            f"{self.API}/projects/{ref}/database/query",
-            data=json.dumps({"query": sql}).encode(),
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-                # Cloudflare in front of api.supabase.com rejects urllib's default UA (error 1010)
-                "User-Agent": "diabase/0.1",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 # nosec B310 — fixed https host
-                body = resp.read().decode()
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode(errors="replace")
+        attempts = 0
+        while True:
+            req = urllib.request.Request(  # noqa: S310 — fixed https host
+                f"{self.API}/projects/{ref}/database/query",
+                data=json.dumps({"query": sql}).encode(),
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    # Cloudflare in front of api.supabase.com rejects urllib's default UA (error 1010)
+                    "User-Agent": "diabase/0.1",
+                },
+                method="POST",
+            )
             try:
-                detail = json.loads(detail).get("message", detail)
-            except (json.JSONDecodeError, AttributeError):
-                pass
-            raise AdapterError(f"Supabase API {e.code}: {detail}") from None
-        except urllib.error.URLError as e:
-            raise AdapterError(f"Supabase API unreachable: {e.reason}") from None
+                with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 # nosec B310 — fixed https host
+                    body = resp.read().decode()
+                break
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempts < self.MAX_429_RETRIES:
+                    # the Management API throttles per minute; a short backoff
+                    # (honoring Retry-After when present) usually clears it
+                    attempts += 1
+                    try:
+                        delay = min(float(e.headers.get("Retry-After", "")), 10.0)
+                    except (TypeError, ValueError):
+                        delay = 1.5 * attempts
+                    time.sleep(delay)
+                    continue
+                detail = e.read().decode(errors="replace")
+                try:
+                    detail = json.loads(detail).get("message", detail)
+                except (json.JSONDecodeError, AttributeError):
+                    pass
+                raise AdapterError(f"Supabase API {e.code}: {detail}") from None
+            except urllib.error.URLError as e:
+                raise AdapterError(f"Supabase API unreachable: {e.reason}") from None
         result = json.loads(body) if body else []
         if isinstance(result, dict):  # some API versions wrap results in {"result": [...]}
             result = result.get("result", result)
@@ -282,6 +298,59 @@ class SupabaseCloudAdapter(BaseAdapter):
                 "truncated_at": 50,
             }
         return {"ok": True, "rows": []}
+
+    def get_schema(self):
+        """Whole schema in 4 API calls, however many tables there are.
+
+        The base implementation (list_tables + describe_table per table)
+        costs 1 + 3N requests — enough to trip the Management API's
+        per-minute throttle on any real schema. Batching keeps the
+        schema browser well under the limit.
+        """
+        tables = self.list_tables()
+        columns = self._query(
+            "SELECT table_name, column_name, data_type, is_nullable, column_default "
+            "FROM information_schema.columns WHERE table_schema='public' "
+            "ORDER BY table_name, ordinal_position"
+        )
+        pks = self._query(
+            "SELECT kcu.table_name, kcu.column_name "
+            "FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu "
+            "ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
+            "WHERE tc.constraint_type = 'PRIMARY KEY' AND tc.table_schema = 'public'"
+        )
+        fks = self._query(
+            "SELECT kcu.table_name, kcu.column_name, ccu.table_name AS ref_table, "
+            "ccu.column_name AS ref_column "
+            "FROM information_schema.table_constraints tc "
+            "JOIN information_schema.key_column_usage kcu "
+            "ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
+            "JOIN information_schema.constraint_column_usage ccu "
+            "ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema "
+            "WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'"
+        )
+        pk_set = {(r["table_name"], r["column_name"]) for r in pks}
+        fk_map = {
+            (r["table_name"], r["column_name"]): {"table": r["ref_table"], "column": r["ref_column"]}
+            for r in fks
+        }
+        schema = {t: [] for t in tables}
+        for r in columns:
+            t = r["table_name"]
+            if t not in schema:
+                continue  # views/other schemas guarded by the tables list
+            schema[t].append(
+                {
+                    "name": r["column_name"],
+                    "type": r["data_type"],
+                    "nullable": r["is_nullable"] == "YES",
+                    "primary_key": (t, r["column_name"]) in pk_set,
+                    "default": r["column_default"],
+                    "references": fk_map.get((t, r["column_name"])),
+                }
+            )
+        return schema
 
 
 ADAPTERS = {

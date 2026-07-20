@@ -208,3 +208,17 @@ class TestProjectSettings:
             AuditEntry.objects.filter(action__startswith="context_file").values_list("action", flat=True)
         )
         assert "context_file.added" in actions and "context_file.removed" in actions
+
+
+class TestContextFileJson:
+    def test_returns_content_for_editor(self, client, project):
+        from workspaces.services import save_context_file
+
+        save_context_file(project, "notes.md", "# Hello\nworld")
+        r = client.get(reverse("context_file_json", args=[project.pk]) + "?name=notes.md")
+        assert r.status_code == 200
+        assert r.json() == {"name": "notes.md", "content": "# Hello\nworld", "size": 13}
+
+    def test_missing_file_404s(self, client, project):
+        r = client.get(reverse("context_file_json", args=[project.pk]) + "?name=nope.md")
+        assert r.status_code == 404

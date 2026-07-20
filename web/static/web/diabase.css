@@ -175,49 +175,58 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
 }
 .schema-overlay {
   position: fixed; inset: 7vh 9vw; z-index: 50;
-  background: var(--panel-solid); border-radius: 22px; padding: 1.4rem 1.6rem;
-  overflow: auto;
+  background: var(--panel-solid); border-radius: 34px; padding: 1.4rem 1.6rem 0;
+  /* visible: the orbiting glow lives OUTSIDE the box (pseudo at negative
+     inset) and overflow:hidden would clip it away entirely */
+  overflow: visible; display: flex; flex-direction: column;
   opacity: 0; transform: scale(0.28); transform-origin: var(--orb-x, 50%) var(--orb-y, 20%);
   pointer-events: none;
   transition: transform 0.45s var(--ease), opacity 0.35s var(--ease);
 }
-.schema-overlay { --ospin: 6s; --omorph: 10s; }
-.schema-overlay.working { --ospin: 1.6s; --omorph: 3s; }
-.schema-overlay::before, .schema-overlay::after, .schema-overlay .oring {
-  content: ""; position: absolute; inset: 0; border-radius: 22px; padding: 2px;
-  background: conic-gradient(from var(--aura-angle), var(--aura-1), var(--aura-2), var(--aura-3), var(--aura-4), var(--aura-1));
+.schema-overlay .panel-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+/* glowing orbit border (CSSnippets-style): two layers behind the panel
+   filled with a conic gradient whose ANGLE rotates — colored segments
+   separated by transparent gaps, so the glow visibly travels around the
+   card; the blurred twin underneath is the halo */
+.schema-overlay { --ospin: 5s; }
+.schema-overlay.working { --ospin: 1.4s; }
+.schema-overlay::before, .schema-overlay::after {
+  content: ""; position: absolute; inset: -3px;
+  border-radius: inherit; padding: 3px;
+  background: conic-gradient(
+    from var(--aura-angle),
+    var(--aura-1), var(--aura-4) 12%, transparent 30%, transparent 48%,
+    var(--aura-2), var(--aura-3) 62%, transparent 80%, transparent 96%,
+    var(--aura-1)
+  );
   -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   -webkit-mask-composite: xor; mask-composite: exclude;
-  mix-blend-mode: screen;
-  animation: aura-spin var(--ospin) linear infinite, overlay-morph var(--omorph) ease-in-out infinite, orb-hue 14s linear infinite;
+  animation: aura-spin var(--ospin) linear infinite;
   pointer-events: none;
 }
-/* fluo halo + counter-weaving band, like the orb */
-.schema-overlay::after { filter: blur(9px); opacity: 0.65; }
-.schema-overlay .oring {
-  inset: -5px; padding: 1.5px; opacity: 0.75; filter: blur(0.5px);
-  animation: aura-spin calc(var(--ospin) * 0.55) linear infinite reverse,
-             overlay-morph2 calc(var(--omorph) * 0.7) ease-in-out infinite,
-             orb-hue 14s linear infinite;
+.schema-overlay::after {
+  inset: -5px; padding: 6px;
+  filter: blur(14px); opacity: 0.95;
+  animation: aura-spin var(--ospin) linear infinite, glow-breathe 3.5s ease-in-out infinite;
 }
-@keyframes overlay-morph {
-  0%, 100% { border-radius: 26px 19px 28px 17px; }
-  25% { border-radius: 18px 27px 17px 28px; }
-  50% { border-radius: 28px 17px 26px 20px; }
-  75% { border-radius: 17px 28px 19px 26px; }
-}
-@keyframes overlay-morph2 {
-  0%, 100% { border-radius: 19px 28px 17px 27px; }
-  33% { border-radius: 28px 18px 27px 17px; }
-  66% { border-radius: 17px 26px 20px 28px; }
-}
+@keyframes glow-breathe { 50% { opacity: 0.6; } }
 body.overlay-open .overlay-veil { opacity: 1; pointer-events: auto; }
 .schema-overlay.open { opacity: 1; transform: scale(1); pointer-events: auto; }
 body.overlay-open .orb-wrap .orb { transform: scale(0.6); opacity: 0.25; }
 @keyframes aura-spin { to { --aura-angle: 360deg; } }
 
-.schema-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1.4rem; position: relative; }
-.fk-svg { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+/* ---------- schema canvas: pan/zoom viewport around an auto-layered graph ---------- */
+.schema-viewport {
+  position: relative; flex: 1 1 auto; overflow: hidden; cursor: grab;
+  margin: 0 -1.6rem; border-top: 1px solid var(--line);
+  border-radius: 0 0 34px 34px; /* the panel no longer clips: round our own bottom corners */
+  background:
+    radial-gradient(1px 1px at center, var(--line-strong) 1px, transparent 1.5px) 0 0 / 26px 26px;
+}
+.schema-viewport.panning { cursor: grabbing; }
+.schema-canvas { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+.schema-grid { position: relative; } /* legacy hook kept for the "no tables yet" empty state */
+.fk-svg { position: absolute; top: 0; left: 0; pointer-events: none; overflow: visible; }
 .fk-edge {
   fill: none; stroke: var(--aura-2); stroke-width: 1.6; opacity: 0.75;
   stroke-dasharray: 6 5; animation: fk-flow 1.2s linear infinite, rise 0.5s var(--ease) backwards;
@@ -225,16 +234,81 @@ body.overlay-open .orb-wrap .orb { transform: scale(0.6); opacity: 0.25; }
 .fk-hint { font-size: 0.7rem; color: var(--aura-2); opacity: 0.85; }
 @keyframes fk-flow { to { stroke-dashoffset: -11; } }
 .table-card {
+  position: absolute; width: 252px; box-sizing: border-box;
   border: 1px solid var(--line); border-radius: var(--radius-sm);
-  padding: 0.7rem 0.9rem; background: rgba(10, 12, 17, 0.5);
+  padding: 0.7rem 0.9rem; background: var(--panel-solid);
   animation: rise 0.4s var(--ease) backwards;
 }
 .table-card.new { border-color: var(--aura-2); box-shadow: 0 0 22px rgba(62, 201, 167, 0.25); }
-.table-card h3 { margin: 0 0 0.5rem; font-size: 0.95rem; font-family: var(--mono); color: var(--aura-2); }
-.table-card table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
-.table-card td { padding: 0.15rem 0.3rem; border-bottom: 1px solid var(--line); }
+.table-card.measuring { visibility: hidden; animation: none; }
+.table-card h3 {
+  margin: 0 0 0.5rem; font-size: 0.95rem; font-family: var(--mono); color: var(--aura-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.table-card table { width: 100%; border-collapse: collapse; font-size: 0.8rem; table-layout: fixed; }
+.table-card td { padding: 0.15rem 0.3rem; border-bottom: 1px solid var(--line); overflow-wrap: break-word; }
 .table-card td.type { color: var(--dim); }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+
+.zoom-controls {
+  position: absolute; right: 1.2rem; bottom: 1.2rem; z-index: 5;
+  display: flex; flex-direction: column; background: var(--panel-solid);
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm); overflow: hidden;
+}
+.zoom-controls button {
+  background: transparent; border: 0; border-radius: 0; color: var(--txt);
+  width: 34px; height: 34px; padding: 0; font-size: 1.05rem; line-height: 1;
+}
+.zoom-controls button:hover { background: rgba(148, 163, 199, 0.12); filter: none; transform: none; }
+.zoom-controls button + button { border-top: 1px solid var(--line); }
+.zoom-pct { font-size: 0.68rem; color: var(--dim); text-align: center; padding: 0.2rem 0; font-family: var(--mono); }
+
+.panel-scroll { flex: 1 1 auto; overflow-y: auto; margin: 0 -0.2rem; padding: 0 0.2rem 1.2rem; }
+
+/* ---------- context editor modal: source | rendered preview ---------- */
+.editor-split {
+  flex: 1 1 auto; min-height: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1rem;
+  padding-bottom: 1rem;
+}
+@media (max-width: 900px) { .editor-split { grid-template-columns: 1fr; } }
+.editor-code {
+  display: flex; min-height: 0; overflow: hidden;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: rgba(10, 12, 17, 0.6);
+}
+.editor-code textarea {
+  flex: 1 1 auto; height: 100%; resize: none; border: 0; border-radius: 0;
+  background: transparent; font-family: var(--mono); font-size: 0.82rem; line-height: 1.5;
+  white-space: pre; overflow-x: auto; /* one visual row per logical line: keeps the gutter honest */
+}
+.editor-code textarea:focus { box-shadow: none; }
+#editor-gutter {
+  flex: 0 0 auto; margin: 0; padding: 0.55rem 0.6rem 0.55rem 0.8rem; text-align: right;
+  color: var(--dim); font: 0.82rem/1.5 var(--mono); user-select: none;
+  overflow: hidden; border-right: 1px solid var(--line); min-width: 2.6rem;
+}
+.editor-preview {
+  overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 0.8rem 1rem; background: rgba(10, 12, 17, 0.5); font-size: 0.9rem;
+}
+.editor-meta { font-size: 0.72rem; color: var(--dim); font-family: var(--mono); }
+.editor-footer { flex: 0 0 auto; display: flex; gap: 0.6rem; justify-content: flex-end; padding-bottom: 1.2rem; }
+.file-row {
+  display: flex; align-items: center; gap: 0.5rem; width: 100%; text-align: left;
+  background: transparent; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  color: var(--txt); padding: 0.5rem 0.7rem; font: inherit; font-size: 0.85rem; cursor: pointer;
+  transition: border-color 0.15s var(--ease);
+}
+.file-row:hover { border-color: var(--aura-3); transform: none; filter: none; }
+.file-row .fname { font-family: var(--mono); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-preview {
+  border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0.5rem 0.7rem;
+  font-size: 0.8rem; color: var(--dim); cursor: pointer; min-height: 2.4rem;
+  overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+  transition: border-color 0.15s var(--ease);
+}
+.prompt-preview:hover { border-color: var(--aura-3); }
 
 /* ---------- chat ---------- */
 #chatlog { display: flex; flex-direction: column; gap: 0.6rem; max-height: 52vh; overflow-y: auto; padding-right: 0.3rem; margin-bottom: 0.8rem; min-width: 0; }
@@ -245,8 +319,21 @@ body.overlay-open .orb-wrap .orb { transform: scale(0.6); opacity: 0.25; }
 .msg { overflow-wrap: break-word; }
 .msg.assistant p { margin: 0.35rem 0; } .msg.assistant p:first-child { margin-top: 0; } .msg.assistant p:last-child { margin-bottom: 0; }
 .msg.assistant code { background: #0b0e16; border: 1px solid var(--line); border-radius: 5px; padding: 0.05rem 0.3rem; font-size: 0.84em; font-family: var(--mono); }
-.msg.assistant pre { background: #0b0e16; border: 1px solid var(--line); border-radius: 8px; padding: 0.5rem 0.7rem; overflow-x: auto; }
+.msg.assistant pre { background: #0b0e16; border: 1px solid var(--line); border-radius: 8px; padding: 0.6rem 0.8rem; overflow-x: auto; }
+.msg.assistant pre code { display: block; background: none; border: none; padding: 0; border-radius: 0; font-size: 0.82rem; line-height: 1.55; white-space: pre; }
 .msg.assistant ul, .msg.assistant ol { margin: 0.35rem 0; padding-left: 1.3rem; }
+.msg.assistant blockquote {
+  margin: 0.4rem 0; padding: 0.2rem 0 0.2rem 0.8rem;
+  border-left: 2px solid var(--aura-1); color: var(--dim);
+}
+.msg.assistant h1, .msg.assistant h2, .msg.assistant h3, .msg.assistant h4 {
+  text-transform: none; letter-spacing: normal; color: var(--txt); font-weight: 650;
+}
+.msg.assistant h1 { font-size: 1.22rem; }
+.msg.assistant h2 { font-size: 1.08rem; }
+.msg.assistant h3 { font-size: 0.98rem; }
+.msg.assistant h4 { font-size: 0.92rem; color: var(--dim); }
+.msg.assistant hr { border: 0; border-top: 1px solid var(--line-strong); margin: 0.7rem 0; }
 .msg.assistant table { border-collapse: collapse; margin: 0.4rem 0; font-size: 0.84rem; width: 100%; table-layout: fixed; }
 .msg.assistant th, .msg.assistant td { border-bottom: 1px solid var(--line); padding: 0.25rem 0.5rem; text-align: left; }
 .msg.assistant th { color: var(--dim); font-weight: 600; }
@@ -257,6 +344,18 @@ body.overlay-open .orb-wrap .orb { transform: scale(0.6); opacity: 0.25; }
 }
 .chip .risk { margin-left: auto; }
 .chip.denied { border-color: var(--danger); color: var(--danger); }
+
+/* the send affordance lives INSIDE the input: Enter is the primary action,
+   the small icon is there for mouse/touch without shouting */
+.chatbox { position: relative; display: flex; }
+.chatbox textarea { resize: none; padding-right: 2.9rem; }
+.chatbox .send-icon {
+  position: absolute; right: 0.5rem; bottom: 0.5rem;
+  width: 30px; height: 30px; padding: 0; border-radius: 50%;
+  font-size: 1rem; line-height: 1; display: flex; align-items: center; justify-content: center;
+}
+.chatbox .send-icon:disabled { opacity: 0.35; cursor: default; transform: none; filter: none; }
+.chat-hint { margin: 0.35rem 0 0; font-size: 0.7rem; color: var(--dim); text-align: right; }
 
 /* ---------- timeline ---------- */
 .timeline { display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.8rem; min-width: 0; }
