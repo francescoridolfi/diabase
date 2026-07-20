@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "diabase",
+      "runtimeExecutable": "zsh",
+      "runtimeArgs": ["-c", "source ~/.zshrc >/dev/null 2>&1; exec .venv/bin/python manage.py runserver 8001"],
+      "port": 8001
+    }
+  ]
+}

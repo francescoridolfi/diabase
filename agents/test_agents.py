@@ -19,7 +19,7 @@ from agents.backends.claude_code import ClaudeCodeBackend
 from agents.backends.openai_compat import OpenAICompatBackend
 from agents.models import Turn
 from agents.policy import AutonomyPolicy
-from agents.runtime import get_backend, run_turn
+from agents.runtime import get_backend, run_turn, start_turn
 from agents.tools import TOOLS, BoundToolset, ToolDenied
 from audit.models import AuditEntry
 from audit.services import AuditedAdapter
@@ -214,6 +214,84 @@ class TestClaudeCodeBackend:
             ok, reason = ClaudeCodeBackend().availability()
             assert not ok and "claude" in reason
 
+    @pytest.mark.django_db(transaction=True)
+    def test_events_arrive_incrementally_not_buffered_until_the_end(self, project, monkeypatch):
+        """Regression test for the bug where this backend collected every
+        event into a list during asyncio.run() and only yielded them once
+        the ENTIRE turn had finished — so the GUI saw nothing until the
+        agent was completely done, no matter how many tool calls it made.
+
+        Proof: the SDK is faked to pause for a real 0.25s between its first
+        and second message. If events are truly streamed, the first ones
+        arrive well under that delay; the delayed one only arrives after
+        it. Under the old buffering bug, EVERY event — including the
+        first — would only appear after the full delay.
+        """
+        import asyncio
+        import sys
+        import time
+        import types
+
+        toolset = make_toolset(project)
+        DELAY = 0.25
+
+        class FakeTextBlock:
+            def __init__(self, text):
+                self.text = text
+
+        class FakeAssistantMessage:
+            def __init__(self, blocks):
+                self.content = blocks
+
+        class FakeResultMessage:
+            is_error = False
+
+        async def fake_query(*, prompt, options):
+            yield FakeAssistantMessage([FakeTextBlock("Looking...")])
+            await options.mcp_servers["db"]["list_tables"]({})
+            await asyncio.sleep(DELAY)
+            yield FakeAssistantMessage([FakeTextBlock("Done.")])
+            yield FakeResultMessage()
+
+        def fake_tool(name, description, schema):
+            return lambda fn: fn  # the real decorator just wraps; identity is enough here
+
+        def fake_create_sdk_mcp_server(name, version, tools):
+            names = [s.name for s in toolset.allowed_specs()]
+            return {n: t for n, t in zip(names, tools, strict=True)}
+
+        fake_module = types.SimpleNamespace(
+            AssistantMessage=FakeAssistantMessage,
+            ClaudeAgentOptions=lambda **kw: types.SimpleNamespace(**kw),
+            ResultMessage=FakeResultMessage,
+            TextBlock=FakeTextBlock,
+            create_sdk_mcp_server=fake_create_sdk_mcp_server,
+            query=fake_query,
+            tool=fake_tool,
+        )
+        monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_module)
+
+        it = ClaudeCodeBackend().run(system_prompt="s", history=[], user_message="tables?", toolset=toolset)
+        t0 = time.monotonic()
+
+        first = next(it)
+        t_first = time.monotonic() - t0
+        assert isinstance(first, TextDelta) and first.text == "Looking..."
+        assert t_first < DELAY * 0.6, "first event should not wait for the whole turn"
+
+        assert isinstance(next(it), ToolCallStarted)
+        assert isinstance(next(it), ToolCallFinished)
+        t_before_delay = time.monotonic() - t0
+
+        fourth = next(it)  # only produced after the SDK's artificial delay
+        t_after_delay = time.monotonic() - t0
+        assert isinstance(fourth, TextDelta) and fourth.text == "Done."
+        assert t_after_delay - t_before_delay > DELAY * 0.6
+
+        assert isinstance(next(it), TurnCompleted)
+        with pytest.raises(StopIteration):
+            next(it)
+
 
 class FakeBackend:
     """Deterministic backend for orchestration tests."""
@@ -261,3 +339,58 @@ class TestRunTurn:
         monkeypatch.setenv("AGENT_BACKEND", "nope")
         with pytest.raises(ValueError, match="Unknown agent backend"):
             get_backend()
+
+
+class _ImmediateThread:
+    """Runs the target synchronously — exercises the worker's logic without
+    real concurrency or timing, so these tests stay fast and deterministic."""
+
+    def __init__(self, target, daemon=None):
+        self._target = target
+
+    def start(self):
+        self._target()
+
+
+class TestStartTurn:
+    def test_persists_every_event_and_finalizes(self, project):
+        from agents.models import Turn, TurnEvent
+
+        events = [
+            ToolCallStarted(tool="list_tables", payload={}),
+            ToolCallFinished(tool="list_tables", payload={}, output={"tables": []}),
+            TextDelta(text="No tables yet."),
+            TurnCompleted(reply="No tables yet."),
+        ]
+        with (
+            mock.patch("agents.runtime.get_backend", return_value=FakeBackend(events)),
+            mock.patch("agents.runtime.threading.Thread", _ImmediateThread),
+        ):
+            turn = start_turn(project, "what tables exist?", user="francesco")
+
+        turn.refresh_from_db()
+        assert turn.status == "completed"
+        kinds = list(TurnEvent.objects.filter(turn=turn).order_by("pk").values_list("kind", flat=True))
+        assert kinds == ["ToolCallStarted", "ToolCallFinished", "TextDelta", "TurnCompleted"]
+        completed_row = TurnEvent.objects.get(turn=turn, kind="TurnCompleted")
+        assert completed_row.data == {"reply": "No tables yet."}
+        assert ChatMessage.objects.filter(
+            project=project, role="assistant", content="No tables yet."
+        ).exists()
+        assert Turn.objects.count() == 1  # unchanged from what run_turn would create
+
+    def test_execution_is_actually_handed_to_a_background_thread(self, project):
+        # complements the test above: proves start_turn doesn't just run the
+        # worker inline — Turn stays "running" because the mocked Thread
+        # never actually invokes its target
+        events = [TurnCompleted(reply="ok")]
+        with (
+            mock.patch("agents.runtime.get_backend", return_value=FakeBackend(events)),
+            mock.patch("agents.runtime.threading.Thread") as thread_cls,
+        ):
+            thread_cls.return_value = mock.MagicMock()
+            turn = start_turn(project, "hi")
+
+        assert thread_cls.call_args.kwargs.get("daemon") is True
+        thread_cls.return_value.start.assert_called_once()
+        assert turn.status == "running"

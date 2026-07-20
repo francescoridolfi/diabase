@@ -62,6 +62,10 @@ class SQLiteAdapter(BaseAdapter):
         _check_identifier(table)
         with self._connect() as conn:
             rows = conn.execute(f'PRAGMA table_info("{table}")').fetchall()
+            fks = {
+                r["from"]: {"table": r["table"], "column": r["to"]}
+                for r in conn.execute(f'PRAGMA foreign_key_list("{table}")').fetchall()
+            }
         if not rows:
             raise AdapterError(f"Table {table!r} does not exist")
         return [
@@ -71,6 +75,7 @@ class SQLiteAdapter(BaseAdapter):
                 "nullable": not r["notnull"],
                 "primary_key": bool(r["pk"]),
                 "default": r["dflt_value"],
+                "references": fks.get(r["name"]),
             }
             for r in rows
         ]
@@ -84,6 +89,17 @@ class SQLiteAdapter(BaseAdapter):
                 return {"columns": cols, "rows": rows, "truncated_at": 50}
             conn.commit()
             return {"rows_affected": cur.rowcount}
+
+
+_FK_SQL = (
+    "SELECT kcu.column_name, ccu.table_name, ccu.column_name "
+    "FROM information_schema.table_constraints tc "
+    "JOIN information_schema.key_column_usage kcu "
+    "ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
+    "JOIN information_schema.constraint_column_usage ccu "
+    "ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema "
+    "WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public' AND tc.table_name = %s"
+)
 
 
 class PostgresAdapter(BaseAdapter):
@@ -123,6 +139,8 @@ class PostgresAdapter(BaseAdapter):
                 (table,),
             )
             pks = {r[0] for r in cur.fetchall()}
+            cur.execute(_FK_SQL, (table,))
+            fks = {col: {"table": rt, "column": rc} for col, rt, rc in cur.fetchall()}
         return [
             {
                 "name": name,
@@ -130,6 +148,7 @@ class PostgresAdapter(BaseAdapter):
                 "nullable": nullable == "YES",
                 "primary_key": name in pks,
                 "default": default,
+                "references": fks.get(name),
             }
             for name, dtype, nullable, default in rows
         ]
@@ -228,6 +247,19 @@ class SupabaseCloudAdapter(BaseAdapter):
                 f"WHERE i.indrelid='public.{table}'::regclass AND i.indisprimary"
             )
         }
+        fks = {
+            r["column_name"]: {"table": r["ref_table"], "column": r["ref_column"]}
+            for r in self._query(
+                "SELECT kcu.column_name, ccu.table_name AS ref_table, ccu.column_name AS ref_column "  # noqa: S608 # nosec B608 — identifier validated above
+                "FROM information_schema.table_constraints tc "
+                "JOIN information_schema.key_column_usage kcu "
+                "ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema "
+                "JOIN information_schema.constraint_column_usage ccu "
+                "ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema "
+                "WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public' "
+                f"AND tc.table_name = '{table}'"
+            )
+        }
         return [
             {
                 "name": r["column_name"],
@@ -235,6 +267,7 @@ class SupabaseCloudAdapter(BaseAdapter):
                 "nullable": r["is_nullable"] == "YES",
                 "primary_key": r["column_name"] in pks,
                 "default": r["column_default"],
+                "references": fks.get(r["column_name"]),
             }
             for r in rows
         ]

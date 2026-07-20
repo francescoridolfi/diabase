@@ -1,0 +1,121 @@
+{% extends "web/base.html" %}
+{% load static %}
+{% block title %}{{ project.name }} — Diabase{% endblock %}
+{% block content %}
+<h1>{{ project.name }}
+  <span class="pill">{{ project.server.name }} · {{ project.server.adapter_type }}</span>
+  <span class="pill {% if project.autonomy_level == 'read_only' %}warn{% else %}ok{% endif %}">{{ project.get_autonomy_level_display }}</span>
+</h1>
+
+<div class="room">
+  <div class="card side">
+    <h2>Project</h2>
+    <form method="post" action="{% url 'project_update' project.pk %}" class="stack">{% csrf_token %}
+      <label class="lbl">Autonomy</label>
+      <select name="autonomy_level">
+        {% for value, label in autonomy_choices %}
+        <option value="{{ value }}" {% if project.autonomy_level == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      <label class="lbl">System prompt</label>
+      <textarea name="system_prompt" rows="5" placeholder="Project conventions, constraints, tone…">{{ project.system_prompt }}</textarea>
+      <button>Save</button>
+    </form>
+
+    <h2 style="margin-top:1.2rem">Context files</h2>
+    <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Add context files">
+      <i class="dz-icon" aria-hidden="true">⇪</i>
+      <span>Drop files here, or <span class="dz-browse">browse</span></span>
+      <span class="muted">Text/Markdown, up to 100&nbsp;KB each</span>
+      <input type="file" id="dz-input" accept=".md,.markdown,.txt,text/*" multiple hidden>
+    </div>
+    <form id="cfile-form" method="post" action="{% url 'context_file_save' project.pk %}" hidden>{% csrf_token %}
+      <input type="hidden" name="name" id="cfile-name">
+      <textarea name="content" id="cfile-content"></textarea>
+    </form>
+
+    <div class="stack" style="margin-top:0.7rem">
+      {% for f in context_files %}
+      <details class="cfile">
+        <summary>
+          <i class="ti ti-file-text" aria-hidden="true"></i>
+          <span class="cfile-name">{{ f.name }}</span>
+          <span class="muted">{{ f.size }} B</span>
+        </summary>
+        <form method="post" action="{% url 'context_file_save' project.pk %}" class="stack">{% csrf_token %}
+          <input type="hidden" name="name" value="{{ f.name }}">
+          <textarea name="content" rows="6">{{ f.content }}</textarea>
+          <div style="display:flex; gap:0.5rem">
+            <button>Save</button>
+            <button class="ghost" form="del-{{ f.pk }}">Delete</button>
+          </div>
+        </form>
+        <form id="del-{{ f.pk }}" method="post" action="{% url 'context_file_delete' project.pk %}">{% csrf_token %}
+          <input type="hidden" name="name" value="{{ f.name }}">
+        </form>
+      </details>
+      {% empty %}<p class="muted">No context files yet.</p>{% endfor %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="orb-wrap">
+      <div class="orb" id="orb" data-state="idle" role="button" tabindex="0" aria-label="View schema">
+        <div class="ring r2"></div><div class="ring r3"></div>
+      </div>
+      <div class="orb-label" id="orb-label"></div>
+      <div class="orb-hint">View schema</div>
+    </div>
+    <div id="chatlog">
+      {% for m in chat %}<div class="msg {{ m.role }}" data-md="{% if m.role == 'assistant' %}1{% endif %}">{{ m.content }}</div>{% endfor %}
+    </div>
+    <form id="chatform" style="display:flex; gap:0.6rem;">{% csrf_token %}
+      <textarea id="msg" rows="2" placeholder="Ask anything about your backend" style="resize:none" {% if not agent.ok %}disabled{% endif %}></textarea>
+      <button style="align-self:flex-end" {% if not agent.ok %}disabled{% endif %}>Send</button>
+    </form>
+    {% if not agent.ok %}<p style="color:var(--write);font-size:0.8rem">{{ agent.reason }}</p>{% endif %}
+  </div>
+
+  <div class="card">
+    <h2 style="display:flex; justify-content:space-between; align-items:center">
+      Audit trail
+      <button class="ghost" id="audit-open" style="font-size:0.72rem; padding:0.25rem 0.6rem">View all</button>
+    </h2>
+    <div id="timeline">{% include "web/_audit_timeline.html" %}</div>
+  </div>
+</div>
+
+<div class="overlay-veil" id="veil"></div>
+<div class="schema-overlay" id="schema-overlay" role="dialog" aria-modal="true" aria-label="Schema browser">
+  <div class="oring" aria-hidden="true"></div>
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+    <h2 style="margin:0">Schema</h2>
+    <button class="ghost" data-close>Close (Esc)</button>
+  </div>
+  <div class="schema-grid" id="schema-grid"><p style="color:var(--dim)">Loading…</p></div>
+</div>
+
+<div class="schema-overlay" id="audit-overlay" role="dialog" aria-modal="true" aria-label="Audit log">
+  <div class="oring" aria-hidden="true"></div>
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem;">
+    <h2 style="margin:0">Audit log</h2>
+    <button class="ghost" data-close>Close (Esc)</button>
+  </div>
+  <div id="audit-log-list"></div>
+  <button class="ghost" id="audit-more" style="margin-top:0.8rem; display:none">Load more</button>
+</div>
+
+<script>
+  window.DIABASE = {
+    turnStartUrl: "{% url 'turn_start' project.pk %}",
+    turnStreamBase: "{% url 'turn_stream' project.pk 0 %}".replace(/0\/stream\/$/, ""),
+    schemaUrl: "{% url 'schema_json' project.pk %}",
+    auditUrl: "{% url 'audit_partial' project.pk %}",
+    auditLogUrl: "{% url 'audit_log' project.pk %}",
+    contextFileSaveUrl: "{% url 'context_file_save' project.pk %}",
+    csrfToken: "{{ csrf_token }}",
+    activeTurnId: {{ active_turn_id|default:"null" }},
+  };
+</script>
+{% endblock %}
+{% block scripts %}<script src="{% static 'web/room.js' %}"></script>{% endblock %}

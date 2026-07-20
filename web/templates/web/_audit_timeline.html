@@ -1,0 +1,12 @@
+<div class="timeline">
+  {% for e in audit_entries %}
+  <div class="entry">
+    <span class="dot {% if e.outcome == 'success' %}ok{% else %}ko{% endif %}">●</span>
+    <span class="who">{{ e.actor_type }}</span>
+    <span class="action">{{ e.action }}</span>
+    <span class="time">{{ e.created_at|date:"H:i:s" }}</span>
+  </div>
+  {% empty %}
+  <div class="entry"><span style="color:var(--dim)">Nothing recorded yet.</span></div>
+  {% endfor %}
+</div>

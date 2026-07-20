@@ -1,0 +1,315 @@
+/* Diabase design tokens & components. Dark-first; the aura is the accent. */
+
+:root {
+  --bg: #0a0c11;
+  --panel: rgba(22, 26, 36, 0.72);
+  --panel-solid: #161a24;
+  --line: rgba(148, 163, 199, 0.14);
+  --line-strong: rgba(148, 163, 199, 0.28);
+  --txt: #e8ebf4;
+  --dim: #8b95ab;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* the aura palette drives the whole UI */
+  --aura-1: #7c6cf5;
+  --aura-2: #3ec9a7;
+  --aura-3: #4f8ef7;
+  --aura-4: #b06cf5;
+
+  /* risk = color system */
+  --read: #3ec9a7;
+  --write: #f2b24a;
+  --danger: #f26c6c;
+
+  --radius: 16px;
+  --radius-sm: 10px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background:
+    radial-gradient(1100px 500px at 80% -10%, rgba(124, 108, 245, 0.09), transparent 60%),
+    radial-gradient(900px 500px at 0% 110%, rgba(62, 201, 167, 0.06), transparent 60%),
+    var(--bg);
+  color: var(--txt);
+  min-height: 100vh;
+}
+a { color: inherit; text-decoration: none; }
+
+header.top {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0.9rem 1.6rem;
+}
+header.top .logo { font-weight: 700; letter-spacing: 0.02em; }
+header.top .logo em { font-style: normal; background: linear-gradient(90deg, var(--aura-1), var(--aura-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+main { max-width: 1240px; margin: 0 auto; padding: 0.5rem 1.6rem 2rem; }
+
+.card {
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 1.1rem 1.25rem;
+}
+.grid { display: grid; gap: 1rem; }
+
+h1 { font-size: 1.35rem; margin: 0.4rem 0 1rem; }
+h2 { font-size: 0.8rem; margin: 0 0 0.8rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+
+input, select, textarea {
+  background: rgba(10, 12, 17, 0.6);
+  border: 1px solid var(--line-strong);
+  color: var(--txt);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.8rem;
+  font: inherit;
+  width: 100%;
+  transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--aura-1);
+  box-shadow: 0 0 0 3px rgba(124, 108, 245, 0.18);
+}
+button {
+  background: linear-gradient(120deg, var(--aura-1), var(--aura-3));
+  border: 0; color: #fff; border-radius: var(--radius-sm);
+  padding: 0.6rem 1.1rem; font: inherit; font-weight: 600; cursor: pointer;
+  transition: transform 0.15s var(--ease), filter 0.15s var(--ease);
+}
+button:hover { filter: brightness(1.12); transform: translateY(-1px); }
+button:active { transform: scale(0.98); }
+button.ghost { background: transparent; border: 1px solid var(--line-strong); color: var(--dim); }
+
+.pill {
+  display: inline-block; padding: 0.12rem 0.6rem; border-radius: 99px;
+  font-size: 0.72rem; border: 1px solid var(--line-strong); color: var(--dim);
+}
+.pill.ok { color: var(--read); border-color: var(--read); }
+.pill.warn { color: var(--write); border-color: var(--write); }
+.pill.err { color: var(--danger); border-color: var(--danger); }
+
+/* ---------- aura orb: organic fluo ring (hollow, mineral-like) ---------- */
+.orb-wrap { display: flex; flex-direction: column; align-items: center; gap: 0.3rem; }
+.orb {
+  position: relative; width: 84px; height: 84px;
+  cursor: pointer;
+  transition: transform 0.35s var(--ease);
+  animation: orb-breathe 4.5s ease-in-out infinite, orb-hue 14s linear infinite;
+  --ring: 4px;
+  --spin: 7s;
+  --morph: 8s;
+}
+.orb:hover { transform: scale(1.09); }
+.orb::before, .orb::after, .orb .ring {
+  content: ""; position: absolute; inset: 0;
+  padding: var(--ring);
+  background: conic-gradient(from var(--aura-angle), var(--aura-1), var(--aura-2), var(--aura-3), var(--aura-4), var(--aura-1));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  mix-blend-mode: screen;
+  animation: aura-spin var(--spin) linear infinite, orb-morph var(--morph) ease-in-out infinite;
+}
+/* the fluo halo: blurred twin of the main band */
+.orb::after { filter: blur(12px); opacity: 0.8; }
+.orb::before {
+  animation: aura-spin var(--spin) linear infinite,
+             orb-morph var(--morph) ease-in-out infinite,
+             orb-weave1 calc(var(--morph) * 1.4) ease-in-out infinite;
+}
+/* extra bands: near-same radius, counter-rotating, drifting — they cross constantly */
+.orb .r2 {
+  inset: 1.5%; padding: 3px; opacity: 0.95;
+  animation: aura-spin calc(var(--spin) * 0.55) linear infinite reverse,
+             orb-morph2 calc(var(--morph) * 0.65) ease-in-out infinite,
+             orb-weave2 calc(var(--morph) * 1.1) ease-in-out infinite;
+}
+.orb .r3 {
+  inset: -3%; padding: 2.5px; opacity: 0.7; filter: blur(1.5px);
+  animation: aura-spin calc(var(--spin) * 1.4) linear infinite,
+             orb-morph2 calc(var(--morph) * 1.2) ease-in-out infinite reverse,
+             orb-weave1 calc(var(--morph) * 0.9) ease-in-out infinite reverse;
+}
+.orb[data-state="thinking"] { --spin: 1.8s; --morph: 2.8s; }
+.orb[data-state="tool"], .orb[data-state="write"] { --spin: 1s; --morph: 1.8s; animation: orb-breathe 4.5s ease-in-out infinite, orb-hue 14s linear infinite, orb-pulse 0.7s var(--ease); }
+.orb[data-state="write"] { --aura-1: var(--write); --aura-3: var(--write); animation: orb-breathe 4.5s ease-in-out infinite, orb-pulse 0.7s var(--ease); }
+.orb[data-state="error"] { --aura-1: var(--danger); --aura-2: var(--danger); --aura-3: var(--danger); --aura-4: var(--danger); --spin: 4s; animation: orb-breathe 4.5s ease-in-out infinite; }
+.orb-hint { font-size: 0.72rem; color: var(--dim); opacity: 0; transition: opacity 0.3s 0.35s; }
+.orb-wrap:hover .orb-hint { opacity: 1; }
+.orb-label { font-size: 0.78rem; color: var(--dim); min-height: 1.2em; }
+
+@keyframes orb-breathe { 50% { transform: scale(1.045); } }
+@keyframes orb-pulse { 40% { transform: scale(1.16); } }
+@keyframes orb-hue { to { filter: hue-rotate(360deg); } }
+@keyframes orb-morph {
+  0%, 100% { border-radius: 38% 62% 52% 48% / 56% 39% 61% 44%; }
+  25% { border-radius: 61% 39% 40% 60% / 42% 59% 41% 58%; }
+  50% { border-radius: 39% 61% 62% 38% / 60% 41% 59% 40%; }
+  75% { border-radius: 59% 41% 43% 57% / 39% 62% 38% 61%; }
+}
+@keyframes orb-morph2 {
+  0%, 100% { border-radius: 62% 38% 42% 58% / 38% 60% 40% 62%; }
+  33% { border-radius: 38% 62% 60% 40% / 59% 39% 61% 41%; }
+  66% { border-radius: 58% 42% 38% 62% / 41% 61% 39% 59%; }
+}
+/* the weave: whole warped bands rotate and drift against each other */
+@keyframes orb-weave1 {
+  0%, 100% { transform: rotate(0deg) translate(1.5%, -1%); }
+  50% { transform: rotate(24deg) translate(-2%, 1.5%); }
+}
+@keyframes orb-weave2 {
+  0%, 100% { transform: rotate(0deg) translate(-1.5%, 1%); }
+  50% { transform: rotate(-30deg) translate(2%, -1.5%); }
+}
+
+/* ---------- schema overlay: the orb, expanded ---------- */
+@property --aura-angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+.overlay-veil {
+  position: fixed; inset: 0; background: rgba(6, 8, 12, 0.55);
+  backdrop-filter: blur(4px); opacity: 0; pointer-events: none;
+  transition: opacity 0.3s var(--ease); z-index: 40;
+}
+.schema-overlay {
+  position: fixed; inset: 7vh 9vw; z-index: 50;
+  background: var(--panel-solid); border-radius: 22px; padding: 1.4rem 1.6rem;
+  overflow: auto;
+  opacity: 0; transform: scale(0.28); transform-origin: var(--orb-x, 50%) var(--orb-y, 20%);
+  pointer-events: none;
+  transition: transform 0.45s var(--ease), opacity 0.35s var(--ease);
+}
+.schema-overlay { --ospin: 6s; --omorph: 10s; }
+.schema-overlay.working { --ospin: 1.6s; --omorph: 3s; }
+.schema-overlay::before, .schema-overlay::after, .schema-overlay .oring {
+  content: ""; position: absolute; inset: 0; border-radius: 22px; padding: 2px;
+  background: conic-gradient(from var(--aura-angle), var(--aura-1), var(--aura-2), var(--aura-3), var(--aura-4), var(--aura-1));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  mix-blend-mode: screen;
+  animation: aura-spin var(--ospin) linear infinite, overlay-morph var(--omorph) ease-in-out infinite, orb-hue 14s linear infinite;
+  pointer-events: none;
+}
+/* fluo halo + counter-weaving band, like the orb */
+.schema-overlay::after { filter: blur(9px); opacity: 0.65; }
+.schema-overlay .oring {
+  inset: -5px; padding: 1.5px; opacity: 0.75; filter: blur(0.5px);
+  animation: aura-spin calc(var(--ospin) * 0.55) linear infinite reverse,
+             overlay-morph2 calc(var(--omorph) * 0.7) ease-in-out infinite,
+             orb-hue 14s linear infinite;
+}
+@keyframes overlay-morph {
+  0%, 100% { border-radius: 26px 19px 28px 17px; }
+  25% { border-radius: 18px 27px 17px 28px; }
+  50% { border-radius: 28px 17px 26px 20px; }
+  75% { border-radius: 17px 28px 19px 26px; }
+}
+@keyframes overlay-morph2 {
+  0%, 100% { border-radius: 19px 28px 17px 27px; }
+  33% { border-radius: 28px 18px 27px 17px; }
+  66% { border-radius: 17px 26px 20px 28px; }
+}
+body.overlay-open .overlay-veil { opacity: 1; pointer-events: auto; }
+.schema-overlay.open { opacity: 1; transform: scale(1); pointer-events: auto; }
+body.overlay-open .orb-wrap .orb { transform: scale(0.6); opacity: 0.25; }
+@keyframes aura-spin { to { --aura-angle: 360deg; } }
+
+.schema-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 1.4rem; position: relative; }
+.fk-svg { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.fk-edge {
+  fill: none; stroke: var(--aura-2); stroke-width: 1.6; opacity: 0.75;
+  stroke-dasharray: 6 5; animation: fk-flow 1.2s linear infinite, rise 0.5s var(--ease) backwards;
+}
+.fk-hint { font-size: 0.7rem; color: var(--aura-2); opacity: 0.85; }
+@keyframes fk-flow { to { stroke-dashoffset: -11; } }
+.table-card {
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 0.7rem 0.9rem; background: rgba(10, 12, 17, 0.5);
+  animation: rise 0.4s var(--ease) backwards;
+}
+.table-card.new { border-color: var(--aura-2); box-shadow: 0 0 22px rgba(62, 201, 167, 0.25); }
+.table-card h3 { margin: 0 0 0.5rem; font-size: 0.95rem; font-family: var(--mono); color: var(--aura-2); }
+.table-card table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+.table-card td { padding: 0.15rem 0.3rem; border-bottom: 1px solid var(--line); }
+.table-card td.type { color: var(--dim); }
+@keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+
+/* ---------- chat ---------- */
+#chatlog { display: flex; flex-direction: column; gap: 0.6rem; max-height: 52vh; overflow-y: auto; padding-right: 0.3rem; margin-bottom: 0.8rem; min-width: 0; }
+#chatlog .msg, .room > .card { min-width: 0; }
+.msg { padding: 0.55rem 0.85rem; border-radius: 14px; font-size: 0.92rem; max-width: 88%; animation: rise 0.3s var(--ease) backwards; }
+.msg.user { background: rgba(124, 108, 245, 0.16); align-self: flex-end; white-space: pre-wrap; }
+.msg.assistant { background: rgba(22, 26, 36, 0.9); border: 1px solid var(--line); align-self: flex-start; }
+.msg { overflow-wrap: break-word; }
+.msg.assistant p { margin: 0.35rem 0; } .msg.assistant p:first-child { margin-top: 0; } .msg.assistant p:last-child { margin-bottom: 0; }
+.msg.assistant code { background: #0b0e16; border: 1px solid var(--line); border-radius: 5px; padding: 0.05rem 0.3rem; font-size: 0.84em; font-family: var(--mono); }
+.msg.assistant pre { background: #0b0e16; border: 1px solid var(--line); border-radius: 8px; padding: 0.5rem 0.7rem; overflow-x: auto; }
+.msg.assistant ul, .msg.assistant ol { margin: 0.35rem 0; padding-left: 1.3rem; }
+.msg.assistant table { border-collapse: collapse; margin: 0.4rem 0; font-size: 0.84rem; width: 100%; table-layout: fixed; }
+.msg.assistant th, .msg.assistant td { border-bottom: 1px solid var(--line); padding: 0.25rem 0.5rem; text-align: left; }
+.msg.assistant th { color: var(--dim); font-weight: 600; }
+.chip {
+  align-self: stretch; border: 1px dashed var(--line-strong); border-radius: var(--radius-sm);
+  padding: 0.35rem 0.7rem; font-size: 0.76rem; font-family: var(--mono); color: var(--dim);
+  display: flex; align-items: center; gap: 0.5rem; animation: rise 0.25s var(--ease) backwards;
+}
+.chip .risk { margin-left: auto; }
+.chip.denied { border-color: var(--danger); color: var(--danger); }
+
+/* ---------- timeline ---------- */
+.timeline { display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.8rem; min-width: 0; }
+.timeline .entry {
+  display: flex; flex-wrap: wrap; column-gap: 0.5rem; row-gap: 0.1rem;
+  align-items: baseline; color: var(--dim); animation: rise 0.3s var(--ease) backwards; min-width: 0;
+}
+.timeline .entry .who { flex: 0 0 auto; font-family: var(--mono); font-size: 0.72rem; }
+.timeline .entry .action {
+  font-family: var(--mono); color: var(--txt); flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.timeline .entry .time { flex: 0 0 auto; font-size: 0.72rem; }
+.timeline .entry .dot.ok { color: var(--read); }
+.timeline .entry .dot.ko { color: var(--danger); }
+
+.room { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.7fr) minmax(0, 0.9fr); gap: 1rem; align-items: start; }
+@media (max-width: 1180px) { .room { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); } .room .card.side { grid-column: 1 / -1; order: 3; } }
+@media (max-width: 980px) { .room { grid-template-columns: 1fr; } }
+
+.stack { display: flex; flex-direction: column; gap: 0.5rem; }
+.lbl { font-size: 0.72rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
+.muted { color: var(--dim); font-size: 0.78rem; }
+.cfile { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0.45rem 0.7rem; min-width: 0; }
+.cfile summary { cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 0.45rem; }
+.cfile summary .cfile-name { font-family: var(--mono); flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cfile[open] summary { margin-bottom: 0.6rem; }
+
+.dropzone {
+  border: 1.5px dashed var(--line-strong); border-radius: var(--radius-sm);
+  padding: 1rem 0.8rem; display: flex; flex-direction: column; align-items: center;
+  gap: 0.25rem; text-align: center; cursor: pointer; color: var(--dim); font-size: 0.82rem;
+  transition: border-color 0.18s var(--ease), background 0.18s var(--ease);
+}
+.dropzone:hover, .dropzone:focus-visible { border-color: var(--aura-3); outline: none; }
+.dropzone.drag-over { border-color: var(--aura-2); background: rgba(62, 201, 167, 0.08); }
+.dropzone .dz-icon { font-size: 1.3rem; line-height: 1; color: var(--aura-3); }
+.dropzone .dz-browse { color: var(--aura-3); text-decoration: underline; }
+.card.side { min-width: 0; }
+
+/* full audit log rows */
+.log-row {
+  display: flex; gap: 0.8rem; align-items: baseline; flex-wrap: wrap;
+  font-size: 0.8rem; padding: 0.35rem 0.2rem; border-bottom: 1px solid var(--line);
+}
+.log-row .when { font-family: var(--mono); color: var(--dim); font-size: 0.72rem; }
+.log-row .who { min-width: 7rem; color: var(--dim); }
+.log-row .what { font-family: var(--mono); }
+.log-row .outcome { margin-left: auto; font-size: 0.72rem; }
+.log-row .outcome.ok { color: var(--read); }
+.log-row .outcome.err { color: var(--danger); }
+.log-row .err-detail { flex-basis: 100%; color: var(--danger); font-size: 0.74rem; opacity: 0.85; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.15s !important; }
+}

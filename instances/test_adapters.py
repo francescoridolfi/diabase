@@ -67,6 +67,7 @@ class TestSQLiteAdapter:
             "nullable": False,
             "primary_key": False,
             "default": None,
+            "references": None,
         }
 
         assert adapter.get_schema() == {"recipes": cols}
@@ -127,3 +128,16 @@ class TestSupabaseCloudAdapter:
         with mock.patch("urllib.request.urlopen", side_effect=err):
             with pytest.raises(AdapterError, match="Supabase API 401: bad token"):
                 SupabaseCloudAdapter(VALID_REF).list_tables()
+
+
+class TestSQLiteForeignKeys:
+    def test_fk_appears_on_referencing_column(self, tmp_path):
+        a = SQLiteAdapter(str(tmp_path / "fk.db"))
+        a.execute_sql("CREATE TABLE recipes (id INTEGER PRIMARY KEY, title TEXT)")
+        a.execute_sql(
+            "CREATE TABLE reviews (id INTEGER PRIMARY KEY, "
+            "recipe_id INTEGER NOT NULL REFERENCES recipes(id), rating INTEGER)"
+        )
+        cols = {c["name"]: c for c in a.describe_table("reviews")}
+        assert cols["recipe_id"]["references"] == {"table": "recipes", "column": "id"}
+        assert cols["rating"]["references"] is None
