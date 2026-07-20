@@ -396,3 +396,62 @@ class TestStartTurn:
         assert thread_cls.call_args.kwargs.get("daemon") is True
         thread_cls.return_value.start.assert_called_once()
         assert turn.status == "running"
+
+
+class TestAgentConnections:
+    def test_api_key_encrypted_at_rest_and_masked(self, project):
+        from agents.models import AgentConnection
+
+        conn = AgentConnection(name="OpenRouter", backend="openai_compat", model="gpt-4o")
+        conn.api_key = "sk-or-v1-supersecretvalue123"
+        conn.save()
+        conn.refresh_from_db()
+        assert "supersecret" not in conn.api_key_encrypted  # not plaintext in the DB
+        assert conn.api_key == "sk-or-v1-supersecretvalue123"  # roundtrips
+        assert "supersecret" not in conn.masked_key
+        assert conn.masked_key.startswith("sk-")
+
+    def test_project_connection_drives_the_backend(self, project, monkeypatch):
+        from agents.models import AgentConnection
+
+        monkeypatch.delenv("AGENT_BACKEND", raising=False)
+        conn = AgentConnection(
+            name="Ollama", backend="openai_compat", model="llama3.1", base_url="http://localhost:11434/v1"
+        )
+        conn.api_key = "local-key"
+        conn.save()
+        project.agent_connection = conn
+        project.save()
+        backend = get_backend(project=project)
+        assert backend.name == "openai_compat"
+        assert backend.model == "llama3.1"
+        assert backend.base_url == "http://localhost:11434/v1"
+        assert backend.api_key == "local-key"
+
+    def test_anthropic_connection_key_reaches_the_backend(self, project, monkeypatch):
+        from agents.models import AgentConnection
+
+        monkeypatch.delenv("AGENT_BACKEND", raising=False)
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        conn = AgentConnection(name="Claude prod", backend="anthropic_api", model="claude-opus-4-8")
+        conn.api_key = "sk-ant-test"
+        conn.save()
+        project.agent_connection = conn
+        project.save()
+        backend = get_backend(project=project)
+        assert backend.name == "anthropic_api"
+        assert backend.model == "claude-opus-4-8"
+        assert backend.api_key == "sk-ant-test"
+        assert backend.availability()[0]  # key on the connection suffices
+
+    def test_explicit_name_beats_project_connection(self, project):
+        from agents.models import AgentConnection
+
+        conn = AgentConnection.objects.create(name="C", backend="anthropic_api")
+        project.agent_connection = conn
+        project.save()
+        assert get_backend("claude_code", project).name == "claude_code"
+
+    def test_env_fallback_when_no_connection(self, project, monkeypatch):
+        monkeypatch.setenv("AGENT_BACKEND", "openai_compat")
+        assert get_backend(project=project).name == "openai_compat"

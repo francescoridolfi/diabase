@@ -8,6 +8,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from agents.models import AgentConnection
 from agents.runtime import BACKENDS, get_backend, start_turn
 from audit.services import record
 from instances.adapters import get_adapter
@@ -23,12 +24,13 @@ STREAM_IDLE_POLLS_BEFORE_CLOSE = 3
 STREAM_MAX_SECONDS = 20 * 60
 
 
-def _agent_status():
+def _agent_status(project=None):
     try:
-        backend = get_backend()
-        return {"backend": backend.name, "ok": True, "reason": ""}
+        backend = get_backend(project=project)
+        ok, reason = backend.availability()
+        return {"backend": backend.name, "model": getattr(backend, "model", ""), "ok": ok, "reason": reason}
     except (RuntimeError, ValueError) as e:
-        return {"backend": "", "ok": False, "reason": str(e)}
+        return {"backend": "", "model": "", "ok": False, "reason": str(e)}
 
 
 def home(request):
@@ -85,7 +87,8 @@ def project_room(request, pk):
             "audit_entries": project.audit_entries.all()[:10],
             "context_files": project.context_files.all(),
             "autonomy_choices": Project.AUTONOMY_LEVELS,
-            "agent": _agent_status(),
+            "connections": AgentConnection.objects.all(),
+            "agent": _agent_status(project),
             "backends": sorted(BACKENDS),
             "active_turn_id": active_turn.pk if active_turn else None,
         },
@@ -138,6 +141,61 @@ def _actor(request) -> str:
     return getattr(request.user, "username", "") or ""
 
 
+def connections(request):
+    return render(
+        request,
+        "web/connections.html",
+        {
+            "connections": AgentConnection.objects.all(),
+            "backend_choices": AgentConnection.BACKENDS,
+            "agent": _agent_status(),
+        },
+    )
+
+
+@require_POST
+def connection_create(request):
+    name = request.POST.get("name", "").strip()
+    backend = request.POST.get("backend", "")
+    if not name or backend not in dict(AgentConnection.BACKENDS):
+        return redirect("connections")
+    conn = AgentConnection(
+        name=name,
+        backend=backend,
+        model=request.POST.get("model", "").strip(),
+        base_url=request.POST.get("base_url", "").strip(),
+    )
+    conn.api_key = request.POST.get("api_key", "").strip()  # encrypted by the setter
+    conn.save()
+    record(
+        action="connection.created",
+        actor_type="user",
+        actor=_actor(request),
+        # the key itself NEVER reaches the audit trail — only whether one was set
+        payload_in={
+            "name": conn.name,
+            "backend": conn.backend,
+            "model": conn.model,
+            "base_url": conn.base_url,
+            "api_key_set": bool(conn.api_key_encrypted),
+        },
+    )
+    return redirect("connections")
+
+
+@require_POST
+def connection_delete(request, pk):
+    conn = get_object_or_404(AgentConnection, pk=pk)
+    record(
+        action="connection.deleted",
+        actor_type="user",
+        actor=_actor(request),
+        payload_in={"name": conn.name, "backend": conn.backend},
+    )
+    conn.delete()
+    return redirect("connections")
+
+
 @require_POST
 def project_update(request, pk):
     from audit.services import record
@@ -158,6 +216,20 @@ def project_update(request, pk):
             project=project,
             payload_in={"autonomy_level": level},
         )
+
+    if "agent_connection" in request.POST:
+        raw = request.POST.get("agent_connection", "")
+        conn = AgentConnection.objects.filter(pk=raw).first() if raw else None
+        if (conn.pk if conn else None) != project.agent_connection_id:
+            project.agent_connection = conn
+            project.save(update_fields=["agent_connection"])
+            record(
+                action="project.agent_updated",
+                actor_type="user",
+                actor=_actor(request),
+                project=project,
+                payload_in={"connection": conn.name if conn else "auto"},
+            )
     return redirect("project_room", pk=pk)
 
 

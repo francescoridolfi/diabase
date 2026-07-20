@@ -28,20 +28,21 @@ MAX_TOKENS = 8192
 class AnthropicAPIBackend(AgentBackend):
     name = "anthropic_api"
 
-    def __init__(self, model: str | None = None):
+    def __init__(self, model: str | None = None, api_key: str | None = None):
         self.model = model or os.environ.get("DIABASE_ANTHROPIC_MODEL", DEFAULT_MODEL)
+        self.api_key = api_key  # None → the SDK falls back to ANTHROPIC_API_KEY
 
     def availability(self) -> tuple[bool, str]:
-        if os.environ.get("ANTHROPIC_API_KEY"):
+        if self.api_key or os.environ.get("ANTHROPIC_API_KEY"):
             return True, ""
-        return False, "ANTHROPIC_API_KEY is not set"
+        return False, "no API key: set one on the connection or export ANTHROPIC_API_KEY"
 
     def run(
         self, *, system_prompt: str, history: list[dict], user_message: str, toolset: BoundToolset
     ) -> Iterator[TurnEvent]:
         import anthropic
 
-        client = anthropic.Anthropic()
+        client = anthropic.Anthropic(**({"api_key": self.api_key} if self.api_key else {}))
         tools = [
             {"name": s.name, "description": s.description, "input_schema": s.input_schema}
             for s in toolset.allowed_specs()

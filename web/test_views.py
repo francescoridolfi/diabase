@@ -222,3 +222,63 @@ class TestContextFileJson:
     def test_missing_file_404s(self, client, project):
         r = client.get(reverse("context_file_json", args=[project.pk]) + "?name=nope.md")
         assert r.status_code == 404
+
+
+class TestConnectionsViews:
+    def test_create_persists_encrypted_and_audits_without_the_key(self, client, project):
+        from agents.models import AgentConnection
+
+        r = client.post(
+            reverse("connection_create"),
+            {
+                "name": "OpenRouter",
+                "backend": "openai_compat",
+                "model": "gpt-4o",
+                "base_url": "https://openrouter.ai/api/v1",
+                "api_key": "sk-or-verysecret",
+            },
+        )
+        assert r.status_code == 302
+        conn = AgentConnection.objects.get(name="OpenRouter")
+        assert conn.api_key == "sk-or-verysecret"
+        assert "verysecret" not in conn.api_key_encrypted
+        entry = AuditEntry.objects.get(action="connection.created")
+        assert "verysecret" not in json.dumps(entry.payload_in)  # never in the trail
+        assert entry.payload_in["api_key_set"] is True
+
+    def test_delete_audits(self, client, project):
+        from agents.models import AgentConnection
+
+        conn = AgentConnection.objects.create(name="Tmp", backend="claude_code")
+        client.post(reverse("connection_delete", args=[conn.pk]))
+        assert not AgentConnection.objects.filter(name="Tmp").exists()
+        assert AuditEntry.objects.filter(action="connection.deleted").exists()
+
+    def test_project_selects_connection_and_audits(self, client, project):
+        from agents.models import AgentConnection
+
+        conn = AgentConnection.objects.create(name="Ollama", backend="openai_compat", model="llama3.1")
+        r = client.post(
+            reverse("project_update", args=[project.pk]),
+            {"system_prompt": "", "agent_connection": str(conn.pk)},
+        )
+        assert r.status_code == 302
+        project.refresh_from_db()
+        assert project.agent_connection_id == conn.pk
+        entry = AuditEntry.objects.get(action="project.agent_updated")
+        assert entry.payload_in == {"connection": "Ollama"}
+
+    def test_room_shows_connection_select(self, client, project):
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert b'name="agent_connection"' in r.content
+        assert b"Manage connections" in r.content
+
+    def test_connections_page_masks_keys(self, client, project):
+        from agents.models import AgentConnection
+
+        conn = AgentConnection(name="Sec", backend="openai_compat")
+        conn.api_key = "sk-live-abcdefghijklmnop"
+        conn.save()
+        r = client.get(reverse("connections"))
+        assert b"Sec" in r.content
+        assert b"abcdefghijklmnop" not in r.content  # full key never rendered

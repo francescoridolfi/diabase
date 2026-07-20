@@ -24,6 +24,23 @@
       {% if project.system_prompt %}{{ project.system_prompt|truncatechars:160 }}{% else %}Click to set project conventions, constraints, tone…{% endif %}
     </div>
 
+    <h2 style="margin-top:1.2rem; display:flex; justify-content:space-between; align-items:center">
+      Agent
+      {% if agent.ok %}<span class="pill ok">{{ agent.backend }}{% if agent.model %} · {{ agent.model }}{% endif %}</span>
+      {% else %}<span class="pill err" title="{{ agent.reason }}">unavailable</span>{% endif %}
+    </h2>
+    <form method="post" action="{% url 'project_update' project.pk %}" class="stack">{% csrf_token %}
+      <input type="hidden" name="system_prompt" value="{{ project.system_prompt }}">
+      <label class="lbl">Connection</label>
+      <select name="agent_connection" onchange="this.form.submit()">
+        <option value="">Auto (environment default)</option>
+        {% for c in connections %}
+        <option value="{{ c.pk }}" {% if project.agent_connection_id == c.pk %}selected{% endif %}>{{ c.name }} — {{ c.get_backend_display }}</option>
+        {% endfor %}
+      </select>
+      <p class="muted" style="margin:0"><a href="{% url 'connections' %}" style="color:var(--aura-3)">Manage connections →</a></p>
+    </form>
+
     <h2 style="margin-top:1.2rem">Context files</h2>
     <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Add context files">
       <i class="dz-icon" aria-hidden="true">⇪</i>
