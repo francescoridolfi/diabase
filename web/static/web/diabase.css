@@ -345,6 +345,47 @@ body.overlay-open .orb-wrap .orb { transform: scale(0.6); opacity: 0.25; }
 .chip .risk { margin-left: auto; }
 .chip.denied { border-color: var(--danger); color: var(--danger); }
 
+/* system notes fed back to the agent (plan outcomes): quiet, centered */
+.msg.plan-note {
+  align-self: center; max-width: 94%;
+  border: 1px dashed var(--line-strong); background: transparent;
+  color: var(--dim); font-size: 0.76rem; font-family: var(--mono);
+  white-space: pre-wrap;
+}
+
+/* ---------- plan card: the approval gate, rendered in the chat flow ---------- */
+.plan-card {
+  align-self: stretch; border: 1px solid var(--write); border-radius: 14px;
+  background: rgba(242, 178, 74, 0.05); padding: 0.75rem 0.9rem;
+  animation: rise 0.35s var(--ease) backwards;
+}
+.plan-card[data-status="applied"] { border-color: var(--read); background: rgba(62, 201, 167, 0.05); }
+.plan-card[data-status="failed"], .plan-card[data-status="rejected"] { border-color: var(--danger); background: rgba(242, 108, 108, 0.05); }
+.plan-card[data-status="superseded"] { border-color: var(--line-strong); background: transparent; opacity: 0.65; }
+.plan-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.55rem; }
+.plan-title { font-weight: 650; font-size: 0.9rem; }
+.plan-steps { display: flex; flex-direction: column; gap: 0.45rem; }
+.plan-step { display: flex; gap: 0.55rem; align-items: flex-start; }
+.step-mark { flex: 0 0 auto; width: 1.2rem; text-align: center; color: var(--dim); font-size: 0.85rem; line-height: 1.7; }
+.plan-step[data-status="applied"] .step-mark { color: var(--read); }
+.plan-step[data-status="failed"] .step-mark { color: var(--danger); }
+.plan-step[data-status="skipped"] { opacity: 0.55; }
+.step-body { flex: 1 1 auto; min-width: 0; }
+.step-title { font-size: 0.76rem; color: var(--dim); font-family: var(--mono); }
+.step-body pre {
+  margin: 0.25rem 0 0; background: #0b0e16; border: 1px solid var(--line);
+  border-radius: 8px; padding: 0.45rem 0.65rem; overflow-x: auto;
+}
+.step-body pre code { font-family: var(--mono); font-size: 0.78rem; line-height: 1.5; white-space: pre; }
+.step-err { color: var(--danger); font-size: 0.76rem; margin-top: 0.3rem; font-family: var(--mono); }
+.plan-actions { display: flex; gap: 0.5rem; margin-top: 0.7rem; }
+.plan-actions button { font-size: 0.8rem; padding: 0.45rem 0.85rem; }
+.plan-actions .plan-approve { background: linear-gradient(120deg, var(--aura-2), var(--aura-3)); }
+.plan-revise-form { display: flex; gap: 0.5rem; margin-top: 0.55rem; align-items: flex-end; }
+.plan-revise-form[hidden] { display: none; }
+.plan-revise-form textarea { resize: none; font-size: 0.85rem; }
+.plan-revise-form button { font-size: 0.78rem; padding: 0.45rem 0.8rem; flex: 0 0 auto; }
+
 /* the send affordance lives INSIDE the input: Enter is the primary action,
    the small icon is there for mouse/touch without shouting */
 .chatbox { position: relative; display: flex; }

@@ -14,6 +14,7 @@ from .base import (
     TextDelta,
     ToolCallDenied,
     ToolCallFinished,
+    ToolCallPlanned,
     ToolCallStarted,
     TurnCompleted,
     TurnEvent,
@@ -71,7 +72,10 @@ class AnthropicAPIBackend(AgentBackend):
                         yield ToolCallStarted(tool=block.name, payload=payload)
                         try:
                             output = toolset.execute(block.name, payload)
-                            yield ToolCallFinished(tool=block.name, payload=payload, output=output)
+                            if planned := output.get("planned"):
+                                yield ToolCallPlanned(tool=block.name, payload=payload, step=planned["step"])
+                            else:
+                                yield ToolCallFinished(tool=block.name, payload=payload, output=output)
                         except ToolDenied as e:
                             output = {"error": f"Denied by policy: {e}"}
                             yield ToolCallDenied(tool=block.name, payload=payload, reason=str(e))

@@ -24,6 +24,7 @@ from .base import (
     TextDelta,
     ToolCallDenied,
     ToolCallFinished,
+    ToolCallPlanned,
     ToolCallStarted,
     TurnCompleted,
     TurnEvent,
@@ -104,7 +105,10 @@ class OpenAICompatBackend(AgentBackend):
                     yield ToolCallStarted(tool=name, payload=payload)
                     try:
                         output = toolset.execute(name, payload)
-                        yield ToolCallFinished(tool=name, payload=payload, output=output)
+                        if planned := output.get("planned"):
+                            yield ToolCallPlanned(tool=name, payload=payload, step=planned["step"])
+                        else:
+                            yield ToolCallFinished(tool=name, payload=payload, output=output)
                     except ToolDenied as e:
                         output = {"error": f"Denied by policy: {e}"}
                         yield ToolCallDenied(tool=name, payload=payload, reason=str(e))

@@ -72,6 +72,71 @@ class Turn(models.Model):
         return f"{self.backend} turn on {self.project} → {self.status}"
 
 
+class Plan(models.Model):
+    """A batch of write steps waiting for the user's decision.
+
+    Created by the plan gate (see tools.BoundToolset) while a turn runs:
+    at the "plan" autonomy level, write tools queue their calls here
+    instead of executing. The turn that built it proposes it; the user
+    approves, revises or rejects it from the room. Applying executes the
+    steps through the same audited path a live tool call would take.
+    """
+
+    STATUSES = [
+        ("draft", "Draft"),  # still being accumulated by a running turn
+        ("proposed", "Proposed"),  # waiting for the user's decision
+        ("applying", "Applying"),
+        ("applied", "Applied"),
+        ("failed", "Failed"),  # apply stopped on a step error
+        ("rejected", "Rejected"),
+        ("superseded", "Superseded"),  # user asked for a revision, or the turn died
+    ]
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="plans")
+    turn = models.ForeignKey(Turn, on_delete=models.CASCADE, related_name="plans")
+    status = models.CharField(max_length=10, choices=STATUSES, default="draft")
+    decided_by = models.CharField(max_length=150, blank=True)
+    decided_at = models.DateTimeField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    # the turn started automatically after apply, carrying the real step
+    # results back to the agent (the "incremental apply" loop)
+    continuation_turn = models.ForeignKey(
+        Turn, null=True, blank=True, on_delete=models.SET_NULL, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Plan #{self.pk} ({self.status}) on {self.project}"
+
+
+class PlanStep(models.Model):
+    """One queued tool call inside a Plan, in proposal order."""
+
+    STATUSES = [
+        ("pending", "Pending"),
+        ("applied", "Applied"),
+        ("failed", "Failed"),
+        ("skipped", "Skipped"),  # a previous step failed
+    ]
+
+    plan = models.ForeignKey(Plan, on_delete=models.CASCADE, related_name="steps")
+    order = models.PositiveIntegerField()
+    tool = models.CharField(max_length=50)
+    payload = models.JSONField(default=dict, blank=True)
+    status = models.CharField(max_length=10, choices=STATUSES, default="pending")
+    output = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["order"]
+        constraints = [models.UniqueConstraint(fields=["plan", "order"], name="unique_step_order_per_plan")]
+
+    def __str__(self):
+        return f"{self.plan_id}#{self.order} {self.tool} ({self.status})"
+
+
 class TurnEvent(models.Model):
     """One persisted runtime event, in emission order.
 

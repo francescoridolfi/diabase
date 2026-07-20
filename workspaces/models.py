@@ -6,7 +6,11 @@ from instances.models import Server
 class Project(models.Model):
     """A workspace bound to one instance: chat, context, settings, audit."""
 
-    AUTONOMY_LEVELS = [("read_only", "Read-only"), ("full", "Full (audited)")]
+    AUTONOMY_LEVELS = [
+        ("read_only", "Read-only"),
+        ("plan", "Plan & approve"),
+        ("full", "Full (audited)"),
+    ]
 
     name = models.CharField(max_length=100)
     server = models.ForeignKey(Server, on_delete=models.CASCADE, related_name="projects")
@@ -14,7 +18,8 @@ class Project(models.Model):
         blank=True,
         help_text="Appended to Diabase's base prompt: project conventions, constraints, tone.",
     )
-    autonomy_level = models.CharField(max_length=20, choices=AUTONOMY_LEVELS, default="full")
+    # safe-by-default: writes need an approved plan until the user raises this
+    autonomy_level = models.CharField(max_length=20, choices=AUTONOMY_LEVELS, default="plan")
     # which configured connection drives this project's agent; null = auto
     # (env AGENT_BACKEND or first available). String ref: agents imports us.
     agent_connection = models.ForeignKey(
@@ -65,9 +70,13 @@ class ChatMessage(models.Model):
     """One message of a project's conversation (user or agent)."""
 
     ROLES = [("user", "User"), ("assistant", "Assistant")]
+    KINDS = [("chat", "Chat"), ("plan_result", "Plan result")]
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="messages")
     role = models.CharField(max_length=10, choices=ROLES)
+    # plan_result rows are system-generated (apply outcomes fed back to the
+    # agent); they ride in history as user-role turns but render differently
+    kind = models.CharField(max_length=12, choices=KINDS, default="chat")
     content = models.TextField()
     created_at = models.DateTimeField(auto_now_add=True)
 

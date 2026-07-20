@@ -126,6 +126,14 @@
           add("chip", `⚙ ${esc(ev.tool)} <span class="risk pill ${risky ? "warn" : "ok"}">${risky ? "write" : "read"}</span>`);
           break;
         }
+        case "ToolCallPlanned":
+          pulse("write", "planning…");
+          add("chip", `⊕ ${esc(ev.tool)} → step ${ev.step} <span class="risk pill warn">planned</span>`);
+          setOrb("thinking", "planning…");
+          break;
+        case "PlanProposed":
+          loadPlanCard(ev.plan_id);
+          break;
         case "ToolCallDenied":
           add("chip denied", `⛔ ${esc(ev.tool)} — ${esc(ev.reason)}`);
           pulse("error", "blocked by policy");
@@ -196,11 +204,142 @@
     }
   }
 
+  /* ---------- plan card: propose → approve / revise / reject → apply ---------- */
+  const STEP_ICONS = { pending: "○", applied: "✓", failed: "✕", skipped: "⤼" };
+  const PLAN_LABELS = {
+    proposed: "waiting for your decision",
+    applying: "applying…",
+    applied: "applied",
+    failed: "apply failed",
+    rejected: "rejected",
+    superseded: "superseded",
+  };
+
+  function planCardEl(planId) {
+    let el = document.getElementById("plan-" + planId);
+    if (!el) {
+      el = document.createElement("div");
+      el.id = "plan-" + planId;
+      el.className = "plan-card";
+      log.appendChild(el);
+    }
+    return el;
+  }
+
+  function renderPlanCard(plan) {
+    const el = planCardEl(plan.id);
+    el.dataset.status = plan.status;
+    const steps = plan.steps
+      .map((s) => {
+        const sql = s.payload && s.payload.sql ? `<pre><code>${esc(s.payload.sql)}</code></pre>` : "";
+        const err = s.output && s.output.error ? `<div class="step-err">${esc(String(s.output.error))}</div>` : "";
+        return `<div class="plan-step" data-status="${s.status}">
+          <span class="step-mark">${STEP_ICONS[s.status] || "○"}</span>
+          <div class="step-body"><span class="step-title">Step ${s.order} · ${esc(s.tool)}</span>${sql}${err}</div>
+        </div>`;
+      })
+      .join("");
+    const decidable = plan.status === "proposed";
+    el.innerHTML = `
+      <div class="plan-head">
+        <span class="plan-title">Plan #${plan.id}</span>
+        <span class="pill ${plan.status === "applied" ? "ok" : plan.status === "failed" || plan.status === "rejected" ? "err" : "warn"}">${PLAN_LABELS[plan.status] || plan.status}</span>
+      </div>
+      <div class="plan-steps">${steps}</div>
+      ${plan.error ? `<div class="step-err">${esc(plan.error)}</div>` : ""}
+      ${decidable ? `
+      <div class="plan-actions">
+        <button class="plan-approve">Approve &amp; apply</button>
+        <button class="ghost plan-revise">Revise</button>
+        <button class="ghost plan-reject" style="color:var(--danger)">Reject</button>
+      </div>
+      <form class="plan-revise-form" hidden>
+        <textarea rows="2" placeholder="What should change?"></textarea>
+        <button>Send revision</button>
+      </form>` : ""}`;
+    log.scrollTop = log.scrollHeight;
+    if (decidable) wirePlanActions(el, plan.id);
+    return el;
+  }
+
+  async function planFetch(planId, action, body) {
+    const resp = await fetch(`${DIABASE.planBase}${planId}/${action}`, {
+      method: action ? "POST" : "GET",
+      headers: action ? { "Content-Type": "application/json", "X-CSRFToken": csrf() } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.error || "plan request failed");
+    return data;
+  }
+
+  function wirePlanActions(el, planId) {
+    el.querySelector(".plan-approve").addEventListener("click", async () => {
+      try {
+        const plan = await planFetch(planId, "approve/");
+        renderPlanCard(plan);
+        setOrb("write", "applying plan…");
+        pollPlanApply(planId);
+      } catch (err) { add("msg assistant", "⚠ " + esc(err.message)); }
+    });
+    el.querySelector(".plan-reject").addEventListener("click", async () => {
+      try {
+        const plan = await planFetch(planId, "reject/");
+        renderPlanCard(plan);
+        add("msg plan-note", `Plan #${planId} rejected — nothing was executed.`, true);
+        refreshTimeline();
+      } catch (err) { add("msg assistant", "⚠ " + esc(err.message)); }
+    });
+    const reviseForm = el.querySelector(".plan-revise-form");
+    el.querySelector(".plan-revise").addEventListener("click", () => {
+      reviseForm.hidden = !reviseForm.hidden;
+      if (!reviseForm.hidden) reviseForm.querySelector("textarea").focus();
+    });
+    reviseForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const comment = reviseForm.querySelector("textarea").value.trim();
+      if (!comment) return;
+      try {
+        const data = await planFetch(planId, "revise/", { comment });
+        renderPlanCard(data);
+        add("msg user", comment, true);
+        streamTurn(data.turn_id, 0);
+      } catch (err) { add("msg assistant", "⚠ " + esc(err.message)); }
+    });
+  }
+
+  /* apply runs server-side on a background thread: poll the plan until it
+     settles, then attach to the continuation turn the runtime started */
+  async function pollPlanApply(planId) {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 600));
+      let plan;
+      try { plan = await planFetch(planId, ""); } catch { continue; }
+      renderPlanCard(plan);
+      if (plan.status === "applying") continue;
+      refreshTimeline();
+      refreshSchemaIfOpen();
+      if (plan.continuation_turn_id) streamTurn(plan.continuation_turn_id, 0);
+      else setOrb("idle", "");
+      return;
+    }
+  }
+
+  async function loadPlanCard(planId) {
+    try {
+      const plan = await planFetch(planId, "");
+      renderPlanCard(plan);
+      if (plan.status === "applying") { setOrb("write", "applying plan…"); pollPlanApply(planId); }
+    } catch { /* plan may be gone; nothing to render */ }
+  }
+
   // a turn already running when this page loaded (started before a refresh,
   // or from another tab) — reconnect from the beginning: every event is
   // persisted, so replaying from 0 rebuilds the tool chips and partial
   // reply exactly as they'd look if we'd never left, then keeps streaming live
   if (DIABASE.activeTurnId) streamTurn(DIABASE.activeTurnId, 0);
+  // likewise a plan waiting for a decision (or mid-apply) is rebuilt from data
+  if (DIABASE.activePlanId) loadPlanCard(DIABASE.activePlanId);
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();

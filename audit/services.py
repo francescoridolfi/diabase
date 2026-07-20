@@ -99,6 +99,9 @@ class AuditedAdapter:
     def execute_sql(self, sql: str):
         return self._call("execute_sql", {"sql": sql}, lambda: self._adapter.execute_sql(sql))
 
+    def query_sql(self, sql: str):
+        return self._call("query_sql", {"sql": sql}, lambda: self._adapter.query_sql(sql))
+
     def get_schema(self):
         # composed of audited calls: each underlying list/describe is recorded
         return {t: self.describe_table(t) for t in self.list_tables()}

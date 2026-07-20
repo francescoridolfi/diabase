@@ -8,9 +8,11 @@ from unittest import mock
 import pytest
 
 from agents.backends.base import (
+    PlanProposed,
     TextDelta,
     ToolCallDenied,
     ToolCallFinished,
+    ToolCallPlanned,
     ToolCallStarted,
     TurnCompleted,
     TurnFailed,
@@ -36,9 +38,11 @@ def project(tmp_path):
     return Project.objects.create(name="P", server=server)
 
 
-def make_toolset(project, level="full"):
+def make_toolset(project, level="full", turn=None):
     adapter = AuditedAdapter(SQLiteAdapter(project.server.dsn), project=project, actor="test")
-    return BoundToolset(adapter=adapter, policy=AutonomyPolicy(level))
+    return BoundToolset(
+        adapter=adapter, policy=AutonomyPolicy(level), project=project, actor="test", turn=turn
+    )
 
 
 class TestPolicy:
@@ -64,6 +68,7 @@ class TestBoundToolset:
         assert [s.name for s in toolset.allowed_specs()] == [
             "list_tables",
             "describe_table",
+            "query_sql",
             "read_context_file",
             "search_context_files",
         ]
@@ -194,6 +199,7 @@ class TestAnthropicAPIBackend:
         assert [t["name"] for t in sent_tools] == [
             "list_tables",
             "describe_table",
+            "query_sql",
             "execute_sql",
             "read_context_file",
             "search_context_files",
@@ -455,3 +461,195 @@ class TestAgentConnections:
     def test_env_fallback_when_no_connection(self, project, monkeypatch):
         monkeypatch.setenv("AGENT_BACKEND", "openai_compat")
         assert get_backend(project=project).name == "openai_compat"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — Plan & Approve
+# ---------------------------------------------------------------------------
+
+
+def make_turn(project, **kw):
+    return Turn.objects.create(project=project, backend="fake", user_message="x", **kw)
+
+
+def make_proposed_plan(project, sqls):
+    from agents.models import Plan, PlanStep
+
+    plan = Plan.objects.create(project=project, turn=make_turn(project), status="proposed")
+    for i, sql in enumerate(sqls, start=1):
+        PlanStep.objects.create(plan=plan, order=i, tool="execute_sql", payload={"sql": sql})
+    return plan
+
+
+class TestPlanPolicy:
+    def test_plan_level_flags_writes_and_passes_reads(self):
+        policy = AutonomyPolicy("plan")
+        by_name = {s.name: s for s in TOOLS}
+        decision = policy.check(by_name["execute_sql"])
+        assert decision.allowed and decision.requires_plan
+        assert not policy.check(by_name["list_tables"]).requires_plan
+
+    def test_plan_level_still_advertises_write_tools(self, project):
+        # the model must SEE execute_sql to queue steps with it
+        toolset = make_toolset(project, "plan", turn=make_turn(project))
+        assert "execute_sql" in [s.name for s in toolset.allowed_specs()]
+
+    def test_plan_mode_prompt_injected_only_at_plan_level(self, project):
+        from agents.prompts import build_system_prompt
+
+        project.autonomy_level = "plan"
+        assert "Plan & approve mode" in build_system_prompt(project)
+        project.autonomy_level = "full"
+        assert "Plan & approve mode" not in build_system_prompt(project)
+
+
+class TestPlanGate:
+    def test_write_is_queued_not_executed(self, project):
+        from agents.models import Plan
+
+        turn = make_turn(project)
+        toolset = make_toolset(project, "plan", turn=turn)
+        out1 = toolset.execute("execute_sql", {"sql": "CREATE TABLE t (id INTEGER)"})
+        out2 = toolset.execute("execute_sql", {"sql": "CREATE TABLE u (id INTEGER)"})
+        assert out1["planned"]["step"] == 1 and out2["planned"]["step"] == 2
+        plan = Plan.objects.get()  # both steps landed on ONE draft plan
+        assert plan.status == "draft" and plan.turn == turn
+        assert list(plan.steps.values_list("tool", flat=True)) == ["execute_sql", "execute_sql"]
+        # nothing touched the instance; the queueing itself is audited
+        assert not AuditEntry.objects.filter(action="execute_sql").exists()
+        assert AuditEntry.objects.filter(action="plan.step_queued").count() == 2
+
+    def test_reads_execute_immediately_at_plan_level(self, project):
+        toolset = make_toolset(project, "plan", turn=make_turn(project))
+        assert toolset.execute("list_tables", {}) == {"tables": []}
+
+    def test_query_sql_is_a_read_and_never_queued(self, project):
+        from agents.models import Plan
+
+        toolset = make_toolset(project, "plan", turn=make_turn(project))
+        toolset.execute("list_tables", {})  # touches the db file into existence
+        out = toolset.execute("query_sql", {"sql": "SELECT 1 AS x"})
+        assert out["rows"] == [{"x": 1}]  # executed NOW, not planned
+        assert not Plan.objects.exists()
+        assert AuditEntry.objects.filter(action="query_sql", outcome="success").exists()
+
+    def test_query_sql_write_attempt_surfaces_as_tool_error(self, project):
+        toolset = make_toolset(project, "plan", turn=make_turn(project))
+        toolset.execute("list_tables", {})  # touches the db file into existence
+        out = toolset.execute("query_sql", {"sql": "CREATE TABLE sneaky (id INTEGER)"})
+        assert "Read-only query failed" in out["error"]  # the model can read and react
+        assert "sneaky" not in (toolset.execute("list_tables", {})["tables"])
+
+    def test_completed_turn_proposes_the_draft(self, project):
+        from agents.models import Plan
+
+        class QueueingBackend(FakeBackend):
+            def run(self, *, toolset, **kwargs):
+                out = toolset.execute("execute_sql", {"sql": "CREATE TABLE t (id INTEGER)"})
+                yield ToolCallPlanned(tool="execute_sql", payload={}, step=out["planned"]["step"])
+                yield TurnCompleted(reply="I propose one step.")
+
+        project.autonomy_level = "plan"
+        project.save()
+        with mock.patch("agents.runtime.get_backend", return_value=QueueingBackend([])):
+            events = list(run_turn(project, "create table t"))
+        kinds = [type(e) for e in events]
+        assert kinds == [ToolCallPlanned, PlanProposed, TurnCompleted]
+        plan = Plan.objects.get()
+        assert plan.status == "proposed"
+        assert events[1].plan_id == plan.pk and events[1].steps == 1
+
+    def test_failed_turn_discards_the_draft(self, project):
+        from agents.models import Plan
+
+        class FailingQueueingBackend(FakeBackend):
+            def run(self, *, toolset, **kwargs):
+                toolset.execute("execute_sql", {"sql": "CREATE TABLE t (id INTEGER)"})
+                yield TurnFailed(error="boom")
+
+        project.autonomy_level = "plan"
+        project.save()
+        with mock.patch("agents.runtime.get_backend", return_value=FailingQueueingBackend([])):
+            list(run_turn(project, "create table t"))
+        assert Plan.objects.get().status == "superseded"
+
+
+class TestPlanDecisions:
+    def test_approve_applies_steps_and_starts_continuation(self, project):
+        from agents.runtime import approve_plan
+
+        plan = make_proposed_plan(
+            project,
+            ["CREATE TABLE t (id INTEGER)", "INSERT INTO t (id) VALUES (1)"],
+        )
+        continuation = [TurnCompleted(reply="Verified: table t has one row.")]
+        with (
+            mock.patch("agents.runtime.get_backend", return_value=FakeBackend(continuation)),
+            mock.patch("agents.runtime.threading.Thread", _ImmediateThread),
+        ):
+            approve_plan(plan, user="francesco")
+
+        plan.refresh_from_db()
+        assert plan.status == "applied"
+        assert plan.decided_by == "francesco" and plan.decided_at is not None
+        assert list(plan.steps.values_list("status", flat=True)) == ["applied", "applied"]
+        # steps ran through the audited path, attributed to the USER
+        sql_entries = AuditEntry.objects.filter(action="execute_sql", outcome="success")
+        assert sql_entries.count() == 2
+        assert all(e.actor_type == "user" and e.actor == "francesco" for e in sql_entries)
+        actions = set(AuditEntry.objects.values_list("action", flat=True))
+        assert {"plan.approved", "plan.applied"} <= actions
+        # the incremental-apply loop: real results went back to the agent
+        plan.refresh_from_db()
+        assert plan.continuation_turn is not None
+        report = ChatMessage.objects.get(kind="plan_result")
+        assert "Step 1" in report.content and "applied" in report.content
+
+    def test_apply_stops_at_first_failure_and_skips_the_rest(self, project):
+        from agents.runtime import approve_plan
+
+        plan = make_proposed_plan(
+            project,
+            ["CREATE TABLE t (id INTEGER)", "INSERT INTO nope VALUES (1)", "DROP TABLE t"],
+        )
+        with (
+            mock.patch("agents.runtime.get_backend", return_value=FakeBackend([TurnCompleted(reply="ok")])),
+            mock.patch("agents.runtime.threading.Thread", _ImmediateThread),
+        ):
+            approve_plan(plan, user="francesco")
+
+        plan.refresh_from_db()
+        assert plan.status == "failed" and plan.error
+        assert list(plan.steps.values_list("status", flat=True)) == ["applied", "failed", "skipped"]
+        # the DROP never ran
+        assert not AuditEntry.objects.filter(
+            action="execute_sql", payload_in={"sql": "DROP TABLE t"}
+        ).exists()
+        # the failure report still goes back to the agent so it can revise
+        assert "FAILED" in ChatMessage.objects.get(kind="plan_result").content
+
+    def test_reject_executes_nothing_and_informs_the_agent(self, project):
+        from agents.runtime import reject_plan
+
+        plan = make_proposed_plan(project, ["DROP TABLE precious"])
+        reject_plan(plan, user="francesco")
+        plan.refresh_from_db()
+        assert plan.status == "rejected"
+        assert not AuditEntry.objects.filter(action="execute_sql").exists()
+        assert AuditEntry.objects.filter(action="plan.rejected").exists()
+        assert "rejected" in ChatMessage.objects.get(kind="plan_result").content
+
+    def test_revise_supersedes_and_starts_a_new_turn(self, project):
+        from agents.runtime import revise_plan
+
+        plan = make_proposed_plan(project, ["CREATE TABLE t (id INTEGER)"])
+        with (
+            mock.patch("agents.runtime.get_backend", return_value=FakeBackend([TurnCompleted(reply="v2")])),
+            mock.patch("agents.runtime.threading.Thread", _ImmediateThread),
+        ):
+            turn = revise_plan(plan, "use TEXT ids instead", user="francesco")
+        plan.refresh_from_db()
+        assert plan.status == "superseded"
+        assert f"Plan #{plan.pk} was not applied" in turn.user_message
+        assert "use TEXT ids instead" in turn.user_message
+        assert AuditEntry.objects.filter(action="plan.superseded").exists()

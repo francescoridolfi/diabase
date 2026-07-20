@@ -1,25 +1,24 @@
 """Autonomy policy: what the agent may do is decided in our code, not in
 the prompt. Every tool call passes through `check()` before execution.
 
-Phase 1 levels:
+Levels:
 - read_only  → inspection tools only (Risk.READ)
+- plan       → reads execute; writes are queued into a Plan the user
+               must approve before anything touches the instance
 - full       → everything, always audited
-
-The Decision contract already includes `requires_plan` so phase 2
-(plan & approve) plugs in here without touching the backends.
 """
 
 from dataclasses import dataclass
 
-AUTONOMY_LEVELS = ["read_only", "full"]
-DEFAULT_LEVEL = "full"
+AUTONOMY_LEVELS = ["read_only", "plan", "full"]
+DEFAULT_LEVEL = "plan"
 
 
 @dataclass(frozen=True)
 class Decision:
     allowed: bool
     reason: str = ""
-    requires_plan: bool = False  # phase 2 hook
+    requires_plan: bool = False
 
 
 class AutonomyPolicy:
@@ -37,4 +36,6 @@ class AutonomyPolicy:
                 allowed=False,
                 reason=f"Tool {spec.name!r} is blocked: this project is in read-only mode",
             )
+        if self.level == "plan" and spec.risk != "read":
+            return Decision(allowed=True, requires_plan=True)
         return Decision(allowed=True)
