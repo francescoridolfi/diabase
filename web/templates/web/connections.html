@@ -1,66 +1,49 @@
 {% extends "web/base.html" %}
 {% block title %}Connections — Diabase{% endblock %}
 {% block content %}
-<h1>Agent connections</h1>
-<p class="muted" style="margin-top:-0.5rem">
-  Configure how Diabase reaches your models once, then pick a connection per project.
-  API keys are encrypted at rest and never shown again in full.
-</p>
+<div class="page">
+  <h1>Connections</h1>
+  <p class="muted" style="margin-top:-0.5rem">
+    The database instances Diabase manages — a local SQLite file, a self-hosted Postgres,
+    or a Supabase Cloud project.
+  </p>
 
-<div class="grid" style="grid-template-columns: 1.2fr 1fr; align-items:start; margin-top:1rem;">
-  <div class="card">
-    <h2>Configured ({{ connections|length }})</h2>
-    <div class="stack">
-      {% for c in connections %}
-      <div class="file-row" style="cursor:default">
-        <span class="fname">{{ c.name }}</span>
-        <span class="pill">{{ c.get_backend_display }}</span>
-        {% if c.model %}<span class="muted">{{ c.model }}</span>{% endif %}
-        {% if c.masked_key %}<span class="muted" title="API key set">🔑 {{ c.masked_key }}</span>{% endif %}
-        <form method="post" action="{% url 'connection_delete' c.pk %}" style="margin-left:auto">{% csrf_token %}
-          <button class="ghost" style="color:var(--danger); font-size:0.75rem; padding:0.25rem 0.6rem">Delete</button>
-        </form>
+  <div class="grid" style="grid-template-columns: 1.2fr 1fr; align-items:start; margin-top:1rem;">
+    <div class="card">
+      <h2>Connected ({{ servers|length }})</h2>
+      <div class="stack">
+        {% for s in servers %}
+        <div class="file-row" style="cursor:default">
+          <span aria-hidden="true">⛁</span>
+          <span class="fname">{{ s.name }}</span>
+          <span class="pill">{{ s.adapter_type }}</span>
+          <span class="muted">{{ s.projects.count }} project{{ s.projects.count|pluralize }}</span>
+          <form method="post" action="{% url 'server_delete' s.pk %}" style="margin-left:auto"
+                onsubmit="return confirm('Delete “{{ s.name }}”? Its {{ s.projects.count }} project(s) and their chats go with it; the audit trail survives. The actual database is NOT touched.')">
+            {% csrf_token %}
+            <button class="ghost" style="color:var(--danger); font-size:0.75rem; padding:0.25rem 0.6rem">Delete</button>
+          </form>
+        </div>
+        {% empty %}
+        <p class="muted">Nothing connected yet — add the first instance on the right.</p>
+        {% endfor %}
       </div>
-      {% empty %}
-      <p class="muted">No connections yet — create the first one on the right.</p>
-      {% endfor %}
+    </div>
+
+    <div class="card">
+      <h2>Connect an instance</h2>
+      <form method="post" action="{% url 'server_create' %}" class="stack">{% csrf_token %}
+        <label class="lbl">Name</label>
+        <input name="name" placeholder="e.g. Production" required>
+        <label class="lbl">Type</label>
+        <select name="adapter_type">
+          {% for value, label in adapter_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+        </select>
+        <label class="lbl">Path / DSN / project ref</label>
+        <input name="dsn" placeholder="db.sqlite3, postgres://…, or the 20-letter Supabase ref" required>
+        <button>Connect</button>
+      </form>
     </div>
   </div>
-
-  <div class="card">
-    <h2>New connection</h2>
-    <form method="post" action="{% url 'connection_create' %}" class="stack">{% csrf_token %}
-      <label class="lbl">Name</label>
-      <input name="name" placeholder="e.g. Claude prod, Ollama local" required>
-      <label class="lbl">Backend</label>
-      <select name="backend" id="conn-backend">
-        {% for value, label in backend_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
-      </select>
-      <label class="lbl">Model <span class="muted" style="text-transform:none">(optional)</span></label>
-      <input name="model" placeholder="claude-sonnet-5, llama3.1, gpt-4o…">
-      <div id="conn-endpoint" hidden>
-        <label class="lbl">Endpoint base URL</label>
-        <input name="base_url" placeholder="http://localhost:11434/v1">
-      </div>
-      <div id="conn-key" hidden>
-        <label class="lbl">API key</label>
-        <input name="api_key" type="password" autocomplete="off" placeholder="stored encrypted, never shown again">
-      </div>
-      <button>Create connection</button>
-    </form>
-  </div>
 </div>
-
-<script>
-  (() => {
-    const sel = document.getElementById("conn-backend");
-    const sync = () => {
-      document.getElementById("conn-endpoint").hidden = sel.value !== "openai_compat";
-      // claude_code uses the local CLI login: no key to store
-      document.getElementById("conn-key").hidden = sel.value === "claude_code";
-    };
-    sel.addEventListener("change", sync);
-    sync();
-  })();
-</script>
 {% endblock %}

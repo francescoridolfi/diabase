@@ -7,18 +7,19 @@
 <link rel="stylesheet" href="{% static 'web/diabase.css' %}">
 </head>
 <body class="{% block bodyclass %}{% endblock %}">
-<header class="top">
-  <a href="{% url 'home' %}" class="logo">◆ dia<em>base</em></a>
-  <nav style="display:flex; gap:1rem; font-size:0.85rem; color:var(--dim)">
-    <a href="{% url 'home' %}">projects</a>
-    <a href="{% url 'connections' %}">connections</a>
+<div class="app-shell" id="app-shell">
+  <nav class="sidebar" id="sidebar" aria-label="Navigation">
+    <a class="side-head" href="{% url 'home' %}">◆ dia<em>base</em></a>
+    {% block sidebar %}
+    <div class="side-nav">{% include "web/_nav.html" %}</div>
+    {% endblock %}
   </nav>
-  <div>
-    {% if agent.ok %}<span class="pill ok">agent: {{ agent.backend }}</span>
-    {% else %}<span class="pill err" title="{{ agent.reason }}">agent unavailable</span>{% endif %}
-  </div>
-</header>
-<main>{% block content %}{% endblock %}</main>
+  <main class="app-main">
+    {% block burger %}<button class="burger page-burger" id="burger" aria-label="Menu">☰</button>{% endblock %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<script type="module" src="{% static 'web/shell.js' %}"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

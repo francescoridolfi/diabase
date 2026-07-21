@@ -1,46 +1,49 @@
 {% extends "web/base.html" %}
+{% block title %}Projects — Diabase{% endblock %}
 {% block content %}
-<h1>Your projects</h1>
+<div class="page">
+  <h1>Projects</h1>
 
-<div class="grid" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));">
-  {% for p in projects %}
-  <a class="card" href="{% url 'project_room' p.pk %}" style="display:block">
-    <div style="display:flex; align-items:center; gap:0.7rem;">
-      <div class="orb" style="width:34px;height:34px;--ring:2.5px;cursor:default"></div>
-      <div>
-        <div style="font-weight:600">{{ p.name }}</div>
-        <div style="font-size:0.78rem;color:var(--dim)">{{ p.server.name }} · {{ p.server.adapter_type }}</div>
-      </div>
+  <div class="grid" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
+    {% for p in projects %}
+    <div class="card proj-card">
+      <a href="{% url 'project_room' p.pk %}" class="proj-card-main">
+        <div class="orb" style="width:34px;height:34px;--ring:2.5px;cursor:pointer"></div>
+        <div class="proj-card-info">
+          <div class="proj-card-name">{{ p.name }}</div>
+          <div class="muted">{{ p.server.name }} · {{ p.server.adapter_type }} · {{ p.get_autonomy_level_display }}</div>
+        </div>
+      </a>
+      <form method="post" action="{% url 'project_delete' p.pk %}"
+            onsubmit="return confirm('Delete project “{{ p.name }}”? Its chats and plans go with it; the audit trail survives. The database instance itself is NOT touched.')">
+        {% csrf_token %}
+        <button type="submit" class="chat-del" title="Delete project" aria-label="Delete project">✕</button>
+      </form>
     </div>
-  </a>
-  {% empty %}
-  <div class="card" style="grid-column: 1 / -1; text-align:center; color:var(--dim)">
-    No projects yet — connect an instance below and Diabase creates the first one for you.
+    {% empty %}
+    <div class="card" style="grid-column: 1 / -1; text-align:center; color:var(--dim)">
+      No projects yet — create one below{% if not servers %} (you'll need a
+      <a href="{% url 'connections' %}" style="color:var(--aura-3)">connection</a> first){% endif %}.
+    </div>
+    {% endfor %}
   </div>
-  {% endfor %}
-</div>
 
-<div class="grid" style="grid-template-columns: 1fr 1fr; margin-top:1rem;">
-  <div class="card">
-    <h2>Connect an instance</h2>
-    <form method="post" action="{% url 'server_create' %}" style="display:flex; flex-direction:column; gap:0.6rem;">{% csrf_token %}
-      <input name="name" placeholder="Name (e.g. Production)" required>
-      <select name="adapter_type">
-        {% for value, label in adapter_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
-      </select>
-      <input name="dsn" placeholder="Path, DSN, or Supabase project ref" required>
-      <button>Connect</button>
-    </form>
-  </div>
-  <div class="card">
-    <h2>New project on an existing instance</h2>
-    <form method="post" action="{% url 'project_create' %}" style="display:flex; flex-direction:column; gap:0.6rem;">{% csrf_token %}
+  <div class="card" style="margin-top:1rem; max-width:560px">
+    <h2>New project</h2>
+    {% if servers %}
+    <form method="post" action="{% url 'project_create' %}" class="stack">{% csrf_token %}
+      <label class="lbl">Instance</label>
       <select name="server_id">
         {% for s in servers %}<option value="{{ s.pk }}">{{ s.name }} ({{ s.adapter_type }})</option>{% endfor %}
       </select>
-      <input name="name" placeholder="Project name" required>
-      <button {% if not servers %}disabled{% endif %}>Create project</button>
+      <label class="lbl">Project name</label>
+      <input name="name" placeholder="e.g. cucina-it" required>
+      <button>Create project</button>
     </form>
+    {% else %}
+    <p class="muted">Connect a database instance first —
+      <a href="{% url 'connections' %}" style="color:var(--aura-3)">Connections →</a></p>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

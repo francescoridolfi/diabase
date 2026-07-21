@@ -71,13 +71,15 @@ class TestPages:
 
 
 class TestCreationFlows:
-    def test_server_create_makes_project_and_audits(self, client, tmp_path):
+    def test_server_create_audits_without_creating_a_project(self, client, tmp_path):
         r = client.post(
             reverse("server_create"),
             {"name": "Prod", "adapter_type": "sqlite", "dsn": str(tmp_path / "p.db")},
         )
-        assert r.status_code == 302
-        assert Project.objects.filter(name="Prod").exists()
+        assert r.status_code == 302 and r.url == reverse("connections")
+        assert Server.objects.filter(name="Prod").exists()
+        # projects are created explicitly from the Projects page now
+        assert not Project.objects.filter(name="Prod").exists()
         assert AuditEntry.objects.filter(action="server.connected").exists()
 
     def test_project_create_audited(self, client, project):
@@ -291,15 +293,15 @@ class TestConnectionsViews:
     def test_room_shows_connection_select(self, client, project):
         r = client.get(reverse("project_room", args=[project.pk]))
         assert b'name="agent_connection"' in r.content
-        assert b"Manage connections" in r.content
+        assert b"Manage LLM connections" in r.content
 
-    def test_connections_page_masks_keys(self, client, project):
+    def test_settings_page_masks_keys(self, client, project):
         from agents.models import AgentConnection
 
         conn = AgentConnection(name="Sec", backend="openai_compat")
         conn.api_key = "sk-live-abcdefghijklmnop"
         conn.save()
-        r = client.get(reverse("connections"))
+        r = client.get(reverse("settings"))
         assert b"Sec" in r.content
         assert b"abcdefghijklmnop" not in r.content  # full key never rendered
 
@@ -446,3 +448,43 @@ class TestConversationsViews:
         r = client.get(reverse("project_room", args=[project.pk]))
         assert b"RLS policies" in r.content
         assert b'id="sidebar"' in r.content
+
+
+class TestGlobalShell:
+    def test_every_page_carries_the_sidebar_nav(self, client, project):
+        for name in ("home", "connections", "settings"):
+            r = client.get(reverse(name))
+            assert r.status_code == 200
+            assert b'id="sidebar"' in r.content
+            for target in ("home", "connections", "settings"):
+                assert f'href="{reverse(target)}"'.encode() in r.content, name
+
+    def test_connections_page_lists_servers(self, client, project):
+        r = client.get(reverse("connections"))
+        assert b"Local" in r.content  # the project fixture's server
+        assert b'name="adapter_type"' in r.content
+
+    def test_settings_page_hosts_llm_connections(self, client, project):
+        r = client.get(reverse("settings"))
+        assert b"LLM connections" in r.content
+        assert b'name="backend"' in r.content
+
+    def test_project_delete_cascades_and_audits(self, client, project):
+        from workspaces.models import Conversation
+
+        Conversation.objects.create(project=project, title="thread")
+        r = client.post(reverse("project_delete", args=[project.pk]))
+        assert r.status_code == 302
+        assert not Project.objects.exists()
+        assert not Conversation.objects.exists()
+        entry = AuditEntry.objects.get(action="project.deleted")
+        assert entry.project is None  # FK nulled by the delete
+        assert entry.project_name == "Room"  # the denormalized name survives
+
+    def test_server_delete_cascades_projects_and_audits(self, client, project):
+        r = client.post(reverse("server_delete", args=[project.server.pk]))
+        assert r.status_code == 302 and r.url == reverse("connections")
+        assert not Server.objects.exists()
+        assert not Project.objects.exists()
+        entry = AuditEntry.objects.get(action="server.deleted")
+        assert entry.payload_in["projects"] == ["Room"]

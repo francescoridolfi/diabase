@@ -39,10 +39,9 @@ def home(request):
         request,
         "web/home.html",
         {
-            "servers": Server.objects.prefetch_related("projects").order_by("-created_at"),
+            "servers": Server.objects.order_by("-created_at"),
             "projects": Project.objects.select_related("server").order_by("-created_at"),
-            "adapter_choices": Server.ADAPTER_CHOICES,
-            "agent": _agent_status(),
+            "nav_active": "projects",
         },
     )
 
@@ -53,15 +52,48 @@ def server_create(request):
     adapter_type = request.POST.get("adapter_type", "sqlite")
     dsn = request.POST.get("dsn", "").strip()
     if name and dsn:
-        server = Server.objects.create(name=name, adapter_type=adapter_type, dsn=dsn)
-        project = Project.objects.create(name=name, server=server)
+        Server.objects.create(name=name, adapter_type=adapter_type, dsn=dsn)
         record(
             action="server.connected",
             actor_type="user",
-            project=project,
+            actor=_actor(request),
             payload_in={"name": name, "adapter_type": adapter_type},
         )
-        return redirect("project_room", pk=project.pk)
+    return redirect("connections")
+
+
+@require_POST
+def server_delete(request, pk):
+    """Removes the connection and (cascade) its projects and chats; the
+    managed database itself is never touched, and the audit trail keeps
+    every action ever taken against it."""
+    server = get_object_or_404(Server, pk=pk)
+    record(
+        action="server.deleted",
+        actor_type="user",
+        actor=_actor(request),
+        payload_in={
+            "name": server.name,
+            "adapter_type": server.adapter_type,
+            "projects": list(server.projects.values_list("name", flat=True)),
+        },
+    )
+    server.delete()
+    return redirect("connections")
+
+
+@require_POST
+def project_delete(request, pk):
+    project = get_object_or_404(Project, pk=pk)
+    record(
+        action="project.deleted",
+        actor_type="user",
+        actor=_actor(request),
+        # the FK nulls on delete; the denormalized names survive by design
+        project=project,
+        payload_in={"name": project.name, "server": project.server.name},
+    )
+    project.delete()
     return redirect("home")
 
 
@@ -161,13 +193,28 @@ def _actor(request) -> str:
 
 
 def connections(request):
+    """Database instances (sqlite / postgres / supabase) — what Diabase manages."""
     return render(
         request,
         "web/connections.html",
         {
+            "servers": Server.objects.prefetch_related("projects").order_by("-created_at"),
+            "adapter_choices": Server.ADAPTER_CHOICES,
+            "nav_active": "connections",
+        },
+    )
+
+
+def settings_page(request):
+    """Site settings; LLM connections are the only section for now."""
+    return render(
+        request,
+        "web/settings.html",
+        {
             "connections": AgentConnection.objects.all(),
             "backend_choices": AgentConnection.BACKENDS,
             "agent": _agent_status(),
+            "nav_active": "settings",
         },
     )
 
@@ -177,7 +224,7 @@ def connection_create(request):
     name = request.POST.get("name", "").strip()
     backend = request.POST.get("backend", "")
     if not name or backend not in dict(AgentConnection.BACKENDS):
-        return redirect("connections")
+        return redirect("settings")
     conn = AgentConnection(
         name=name,
         backend=backend,
@@ -199,7 +246,7 @@ def connection_create(request):
             "api_key_set": bool(conn.api_key_encrypted),
         },
     )
-    return redirect("connections")
+    return redirect("settings")
 
 
 @require_POST
@@ -212,7 +259,7 @@ def connection_delete(request, pk):
         payload_in={"name": conn.name, "backend": conn.backend},
     )
     conn.delete()
-    return redirect("connections")
+    return redirect("settings")
 
 
 @require_POST
