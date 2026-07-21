@@ -255,14 +255,10 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
 .side-link .ic { width: 1.1rem; text-align: center; opacity: 0.9; }
 .burger { display: none; }
 
-/* projects page cards */
-.proj-card { display: flex; align-items: center; gap: 0.4rem; position: relative; }
-.proj-card-main { display: flex; align-items: center; gap: 0.7rem; flex: 1 1 auto; min-width: 0; }
-.proj-card-info { min-width: 0; }
-.proj-card-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.proj-card .chat-del { position: static; transform: none; flex: 0 0 auto; }
-.proj-card .chat-del:hover { transform: none; }
-.proj-card:hover .chat-del { opacity: 1; }
+/* listing rows: the link area inside a .file-row (projects page) */
+.row-link { min-width: 0; flex: 1 1 auto; display: flex; }
+.row-link .fname { color: var(--txt); }
+.row-link:hover .fname { color: var(--aura-3); }
 
 .chatcol { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .chat-head { display: flex; align-items: center; gap: 0.8rem; padding: 0.55rem 0.2rem 0.6rem; }
@@ -361,6 +357,36 @@ body.overlay-open .overlay-veil { opacity: 1; pointer-events: auto; }
 .modal-overlay.open { opacity: 1; transform: scale(1); pointer-events: auto; }
 .modal-overlay .panel-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
 @media (max-width: 700px) { .modal-overlay { inset: 3vh 3vw; padding: 1rem 1rem 0; } }
+
+/* compact modal: a centered dialog for small creation forms */
+.modal-overlay.modal-sm {
+  inset: auto; top: 50%; left: 50%;
+  width: min(460px, 92vw); max-height: 86dvh; overflow-y: auto;
+  border-radius: 20px; padding: 1.2rem 1.4rem 1.4rem;
+  transform: translate(-50%, -50%) scale(0.94);
+}
+.modal-overlay.modal-sm.open { transform: translate(-50%, -50%) scale(1); }
+.modal-overlay.modal-sm .panel-header { margin-bottom: 0.8rem; }
+
+/* card heading with the "add a row" affordance anchored right */
+.card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 0.8rem;
+}
+.card-head h2 { margin: 0; }
+.add-btn {
+  position: relative; width: 28px; height: 28px; padding: 0; flex: 0 0 auto;
+  border-radius: 50%; display: grid; place-items: center;
+  font-size: 1.05rem; line-height: 1; font-weight: 500; color: var(--txt);
+  background: var(--panel-solid); border: 0; cursor: pointer;
+}
+/* the aura ring: same conic language as the orb, at button scale */
+.add-btn::before {
+  content: ""; position: absolute; inset: -1.5px; z-index: -1; border-radius: 50%;
+  background: conic-gradient(from var(--aura-angle), var(--aura-1), var(--aura-2), var(--aura-3), var(--aura-4), var(--aura-1));
+  animation: aura-spin 7s linear infinite;
+}
+.add-btn:hover { transform: scale(1.1); filter: none; box-shadow: 0 0 14px rgba(124, 108, 245, 0.45); }
 
 /* ---------- schema canvas: pan/zoom viewport around an auto-layered graph ---------- */
 .schema-viewport {

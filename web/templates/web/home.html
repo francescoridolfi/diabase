@@ -3,47 +3,56 @@
 {% block content %}
 <div class="page">
   <h1>Projects</h1>
+  <p class="muted" style="margin-top:-0.5rem">
+    A project binds one database instance to its agent: chats, context files, autonomy and audit.
+  </p>
 
-  <div class="grid" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
-    {% for p in projects %}
-    <div class="card proj-card">
-      <a href="{% url 'project_room' p.pk %}" class="proj-card-main">
-        <div class="orb" style="width:34px;height:34px;--ring:2.5px;cursor:pointer"></div>
-        <div class="proj-card-info">
-          <div class="proj-card-name">{{ p.name }}</div>
-          <div class="muted">{{ p.server.name }} · {{ p.server.adapter_type }} · {{ p.get_autonomy_level_display }}</div>
-        </div>
-      </a>
-      <form method="post" action="{% url 'project_delete' p.pk %}"
-            onsubmit="return confirm('Delete project “{{ p.name }}”? Its chats and plans go with it; the audit trail survives. The database instance itself is NOT touched.')">
-        {% csrf_token %}
-        <button type="submit" class="chat-del" title="Delete project" aria-label="Delete project">✕</button>
-      </form>
+  <div class="card" style="margin-top:1rem">
+    <div class="card-head">
+      <h2>Your projects ({{ projects|length }})</h2>
+      <button class="add-btn" data-modal-open="modal-new-project" title="New project" aria-label="New project">+</button>
     </div>
-    {% empty %}
-    <div class="card" style="grid-column: 1 / -1; text-align:center; color:var(--dim)">
-      No projects yet — create one below{% if not servers %} (you'll need a
-      <a href="{% url 'connections' %}" style="color:var(--aura-3)">connection</a> first){% endif %}.
+    <div class="stack">
+      {% for p in projects %}
+      <div class="file-row" style="cursor:default">
+        <a href="{% url 'project_room' p.pk %}" class="row-link">
+          <span class="fname">{{ p.name }}</span>
+        </a>
+        <span class="pill">{{ p.server.adapter_type }}</span>
+        <span class="muted">{{ p.server.name }}</span>
+        <span class="pill {% if p.autonomy_level == 'plan' %}warn{% elif p.autonomy_level == 'read_only' %}ok{% endif %}">{{ p.get_autonomy_level_display }}</span>
+        <form method="post" action="{% url 'project_delete' p.pk %}" style="margin-left:auto"
+              onsubmit="return confirm('Delete project “{{ p.name }}”? Its chats and plans go with it; the audit trail survives. The database instance itself is NOT touched.')">
+          {% csrf_token %}
+          <button class="ghost" style="color:var(--danger); font-size:0.75rem; padding:0.25rem 0.6rem">Delete</button>
+        </form>
+      </div>
+      {% empty %}
+      <p class="muted">No projects yet — hit «+» above{% if not servers %}
+        (you'll need a <a href="{% url 'connections' %}" style="color:var(--aura-3)">connection</a> first){% endif %}.</p>
+      {% endfor %}
     </div>
-    {% endfor %}
   </div>
+</div>
 
-  <div class="card" style="margin-top:1rem; max-width:560px">
-    <h2>New project</h2>
-    {% if servers %}
-    <form method="post" action="{% url 'project_create' %}" class="stack">{% csrf_token %}
-      <label class="lbl">Instance</label>
-      <select name="server_id">
-        {% for s in servers %}<option value="{{ s.pk }}">{{ s.name }} ({{ s.adapter_type }})</option>{% endfor %}
-      </select>
-      <label class="lbl">Project name</label>
-      <input name="name" placeholder="e.g. cucina-it" required>
-      <button>Create project</button>
-    </form>
-    {% else %}
-    <p class="muted">Connect a database instance first —
-      <a href="{% url 'connections' %}" style="color:var(--aura-3)">Connections →</a></p>
-    {% endif %}
+<div class="modal-overlay modal-sm" id="modal-new-project" role="dialog" aria-modal="true" aria-label="New project">
+  <div class="panel-header">
+    <h2 style="margin:0">New project</h2>
+    <button class="ghost" data-close>Close (Esc)</button>
   </div>
+  {% if servers %}
+  <form method="post" action="{% url 'project_create' %}" class="stack">{% csrf_token %}
+    <label class="lbl">Instance</label>
+    <select name="server_id">
+      {% for s in servers %}<option value="{{ s.pk }}">{{ s.name }} ({{ s.adapter_type }})</option>{% endfor %}
+    </select>
+    <label class="lbl">Project name</label>
+    <input name="name" placeholder="e.g. cucina-it" required>
+    <button>Create project</button>
+  </form>
+  {% else %}
+  <p class="muted">Connect a database instance first —
+    <a href="{% url 'connections' %}" style="color:var(--aura-3)">Connections →</a></p>
+  {% endif %}
 </div>
 {% endblock %}
