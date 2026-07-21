@@ -1,128 +1,140 @@
 {% extends "web/base.html" %}
 {% load static %}
 {% block title %}{{ project.name }} — Diabase{% endblock %}
+{% block bodyclass %}app-room{% endblock %}
 {% block content %}
-<h1>{{ project.name }}
-  <span class="pill">{{ project.server.name }} · {{ project.server.adapter_type }}</span>
-  <span class="pill {% if project.autonomy_level == 'read_only' %}warn{% else %}ok{% endif %}">{{ project.get_autonomy_level_display }}</span>
-</h1>
+<div class="room-shell" id="room-shell" data-ws-open="1">
 
-<div class="room">
-  <div class="card side">
-    <h2>Project</h2>
-    <form method="post" action="{% url 'project_update' project.pk %}" class="stack">{% csrf_token %}
-      <label class="lbl">Autonomy</label>
-      <select name="autonomy_level" onchange="this.form.submit()">
-        {% for value, label in autonomy_choices %}
-        <option value="{{ value }}" {% if project.autonomy_level == value %}selected{% endif %}>{{ label }}</option>
-        {% endfor %}
-      </select>
-      <input type="hidden" name="system_prompt" value="{{ project.system_prompt }}">
-    </form>
-    <label class="lbl" style="margin-top:0.7rem; display:block">System prompt</label>
-    <div class="prompt-preview" id="prompt-preview" role="button" tabindex="0" aria-label="Edit system prompt">
-      {% if project.system_prompt %}{{ project.system_prompt|truncatechars:160 }}{% else %}Click to set project conventions, constraints, tone…{% endif %}
-    </div>
-
-    <h2 style="margin-top:1.2rem; display:flex; justify-content:space-between; align-items:center">
-      Agent
-      {% if agent.ok %}<span class="pill ok">{{ agent.backend }}{% if agent.model %} · {{ agent.model }}{% endif %}</span>
-      {% else %}<span class="pill err" title="{{ agent.reason }}">unavailable</span>{% endif %}
-    </h2>
-    <form method="post" action="{% url 'project_update' project.pk %}" class="stack">{% csrf_token %}
-      <input type="hidden" name="system_prompt" value="{{ project.system_prompt }}">
-      <label class="lbl">Connection</label>
-      <select name="agent_connection" onchange="this.form.submit()">
-        <option value="">Auto (environment default)</option>
-        {% for c in connections %}
-        <option value="{{ c.pk }}" {% if project.agent_connection_id == c.pk %}selected{% endif %}>{{ c.name }} — {{ c.get_backend_display }}</option>
-        {% endfor %}
-      </select>
-      <p class="muted" style="margin:0"><a href="{% url 'connections' %}" style="color:var(--aura-3)">Manage connections →</a></p>
-    </form>
-
-    <h2 style="margin-top:1.2rem">Context files</h2>
-    <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Add context files">
-      <i class="dz-icon" aria-hidden="true">⇪</i>
-      <span>Drop files here, or <span class="dz-browse">browse</span></span>
-      <span class="muted">Text/Markdown, up to 100&nbsp;KB each</span>
-      <input type="file" id="dz-input" accept=".md,.markdown,.txt,text/*" multiple hidden>
-    </div>
-    <form id="cfile-form" method="post" action="{% url 'context_file_save' project.pk %}" hidden>{% csrf_token %}
-      <input type="hidden" name="name" id="cfile-name">
-      <textarea name="content" id="cfile-content"></textarea>
-    </form>
-
-    <div class="stack" style="margin-top:0.7rem">
-      {% for f in context_files %}
-      <button type="button" class="file-row" data-name="{{ f.name }}">
-        <span aria-hidden="true">▤</span>
-        <span class="fname">{{ f.name }}</span>
-        <span class="muted">{{ f.size }} B</span>
-      </button>
-      {% empty %}<p class="muted">No context files yet.</p>{% endfor %}
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="orb-wrap">
-      <div class="orb" id="orb" data-state="idle" role="button" tabindex="0" aria-label="View schema">
+  <section class="chatcol">
+    <div class="chat-head">
+      <div class="orb orb-mini" id="orb" data-state="idle" role="button" tabindex="0"
+           aria-label="Toggle workspace panel" aria-pressed="true" title="Workspace (schema, audit, context)">
         <div class="ring r2"></div><div class="ring r3"></div>
       </div>
+      <div class="chat-title">
+        <h1>{{ project.name }}</h1>
+        <span class="sub">{{ project.server.name }} · {{ project.server.adapter_type }} · {{ project.get_autonomy_level_display }}</span>
+      </div>
       <div class="orb-label" id="orb-label"></div>
-      <div class="orb-hint">View schema</div>
     </div>
+
+    <nav class="m-tabs" id="m-tabs" aria-label="Sections">
+      <button class="mt active" data-view="chat">Chat</button>
+      <button class="mt" data-view="pane-schema">Schema</button>
+      <button class="mt" data-view="pane-audit">Audit</button>
+      <button class="mt" data-view="pane-context">Context</button>
+      <button class="mt" data-view="pane-settings">Settings</button>
+    </nav>
+
     <div id="chatlog">
-      {% for m in chat %}<div class="msg {% if m.kind == 'plan_result' %}plan-note{% else %}{{ m.role }}{% endif %}" data-md="{% if m.role == 'assistant' %}1{% endif %}">{{ m.content }}</div>{% endfor %}
+      {% for m in chat %}<div class="msg {% if m.kind == 'plan_result' %}plan-note{% else %}{{ m.role }}{% endif %}" data-md="{% if m.role == 'assistant' and m.kind != 'plan_result' %}1{% endif %}">{{ m.content }}</div>{% endfor %}
     </div>
     <form id="chatform" class="chatbox">{% csrf_token %}
       <textarea id="msg" rows="2" placeholder="Ask anything about your backend" {% if not agent.ok %}disabled{% endif %}></textarea>
       <button class="send-icon" aria-label="Send (Enter)" title="Send — Enter (Shift+Enter for a new line)" {% if not agent.ok %}disabled{% endif %}>↑</button>
     </form>
     <p class="chat-hint">Enter to send · Shift+Enter for a new line</p>
-    {% if not agent.ok %}<p style="color:var(--write);font-size:0.8rem">{{ agent.reason }}</p>{% endif %}
-  </div>
+    {% if not agent.ok %}<p class="agent-warn">{{ agent.reason }}</p>{% endif %}
+  </section>
 
-  <div class="card">
-    <h2 style="display:flex; justify-content:space-between; align-items:center">
-      Audit trail
-      <button class="ghost" id="audit-open" style="font-size:0.72rem; padding:0.25rem 0.6rem">View all</button>
-    </h2>
-    <div id="timeline">{% include "web/_audit_timeline.html" %}</div>
-  </div>
+  <aside class="workspace" id="workspace" aria-label="Workspace">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" role="tab" data-pane="pane-schema">Schema</button>
+      <button class="tab" role="tab" data-pane="pane-audit">Audit</button>
+      <button class="tab" role="tab" data-pane="pane-context">Context</button>
+      <button class="tab" role="tab" data-pane="pane-settings">Settings</button>
+    </nav>
+
+    <div class="pane pane-flush" id="pane-schema" role="tabpanel">
+      <div class="schema-viewport" id="schema-viewport">
+        <div class="schema-canvas" id="schema-canvas">
+          <div class="schema-grid" id="schema-grid"><p class="dim-note">Loading…</p></div>
+        </div>
+        <div class="zoom-controls">
+          <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+          <span class="zoom-pct" id="zoom-pct">100%</span>
+          <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+          <button type="button" id="zoom-fit" aria-label="Fit to view">⤢</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-audit" role="tabpanel" hidden>
+      <h2 class="pane-label">Live</h2>
+      <div id="timeline">{% include "web/_audit_timeline.html" %}</div>
+      <h2 class="pane-label" style="margin-top:1.1rem">Full log</h2>
+      <div id="audit-log-list"></div>
+      <button class="ghost" id="audit-more" style="margin-top:0.8rem; display:none">Load more</button>
+    </div>
+
+    <div class="pane" id="pane-context" role="tabpanel" hidden>
+      <h2 class="pane-label">System prompt</h2>
+      <div class="prompt-preview" id="prompt-preview" role="button" tabindex="0" aria-label="Edit system prompt">
+        {% if project.system_prompt %}{{ project.system_prompt|truncatechars:160 }}{% else %}Click to set project conventions, constraints, tone…{% endif %}
+      </div>
+      <h2 class="pane-label" style="margin-top:1.1rem">Context files <span class="dim-note">— shared by the whole project</span></h2>
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Add context files">
+        <i class="dz-icon" aria-hidden="true">⇪</i>
+        <span>Drop files here, or <span class="dz-browse">browse</span></span>
+        <span class="muted">Text/Markdown, up to 100&nbsp;KB each</span>
+        <input type="file" id="dz-input" accept=".md,.markdown,.txt,text/*" multiple hidden>
+      </div>
+      <div class="stack" style="margin-top:0.7rem">
+        {% for f in context_files %}
+        <button type="button" class="file-row" data-name="{{ f.name }}">
+          <span aria-hidden="true">▤</span>
+          <span class="fname">{{ f.name }}</span>
+          <span class="muted">{{ f.size }} B</span>
+        </button>
+        {% empty %}<p class="muted">No context files yet.</p>{% endfor %}
+      </div>
+    </div>
+
+    <div class="pane" id="pane-settings" role="tabpanel" hidden>
+      <h2 class="pane-label">Autonomy</h2>
+      <form method="post" action="{% url 'project_update' project.pk %}">{% csrf_token %}
+        <input type="hidden" name="system_prompt" value="{{ project.system_prompt }}">
+        <div class="seg" role="radiogroup" aria-label="Autonomy level">
+          {% for value, label in autonomy_choices %}
+          <button type="submit" name="autonomy_level" value="{{ value }}"
+                  class="seg-btn seg-{{ value }} {% if project.autonomy_level == value %}on{% endif %}"
+                  {% if project.autonomy_level == value %}aria-current="true"{% endif %}>{{ label }}</button>
+          {% endfor %}
+        </div>
+      </form>
+      <p class="seg-note">
+        {% if project.autonomy_level == 'read_only' %}The agent can inspect but never change anything.
+        {% elif project.autonomy_level == 'plan' %}Writes are collected into a plan you approve step by step; every applied step is audited in your name.
+        {% else %}The agent writes directly — every action still lands in the audit trail.{% endif %}
+      </p>
+
+      <h2 class="pane-label" style="margin-top:1.1rem">Agent connection
+        {% if agent.ok %}<span class="pill ok">{{ agent.backend }}{% if agent.model %} · {{ agent.model }}{% endif %}</span>
+        {% else %}<span class="pill err" title="{{ agent.reason }}">unavailable</span>{% endif %}
+      </h2>
+      <form method="post" action="{% url 'project_update' project.pk %}" class="stack">{% csrf_token %}
+        <input type="hidden" name="system_prompt" value="{{ project.system_prompt }}">
+        <select name="agent_connection" onchange="this.form.submit()">
+          <option value="">Auto (environment default)</option>
+          {% for c in connections %}
+          <option value="{{ c.pk }}" {% if project.agent_connection_id == c.pk %}selected{% endif %}>{{ c.name }} — {{ c.get_backend_display }}</option>
+          {% endfor %}
+        </select>
+        <p class="muted" style="margin:0"><a href="{% url 'connections' %}" style="color:var(--aura-3)">Manage connections →</a></p>
+      </form>
+
+      <h2 class="pane-label" style="margin-top:1.1rem">Server</h2>
+      <div class="file-row" style="cursor:default">
+        <span aria-hidden="true">⛁</span>
+        <span class="fname">{{ project.server.name }}</span>
+        <span class="muted">{{ project.server.adapter_type }}</span>
+      </div>
+    </div>
+  </aside>
 </div>
 
 <div class="overlay-veil" id="veil"></div>
-<div class="schema-overlay" id="schema-overlay" role="dialog" aria-modal="true" aria-label="Schema browser">
-  <div class="panel-header">
-    <h2 style="margin:0">Schema</h2>
-    <button class="ghost" data-close>Close (Esc)</button>
-  </div>
-  <div class="schema-viewport" id="schema-viewport">
-    <div class="schema-canvas" id="schema-canvas">
-      <div class="schema-grid" id="schema-grid"><p style="color:var(--dim)">Loading…</p></div>
-    </div>
-    <div class="zoom-controls">
-      <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
-      <span class="zoom-pct" id="zoom-pct">100%</span>
-      <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
-      <button type="button" id="zoom-fit" aria-label="Fit to view">⤢</button>
-    </div>
-  </div>
-</div>
-
-<div class="schema-overlay" id="audit-overlay" role="dialog" aria-modal="true" aria-label="Audit log">
-  <div class="panel-header">
-    <h2 style="margin:0">Audit log</h2>
-    <button class="ghost" data-close>Close (Esc)</button>
-  </div>
-  <div class="panel-scroll">
-    <div id="audit-log-list"></div>
-    <button class="ghost" id="audit-more" style="margin-top:0.8rem; display:none">Load more</button>
-  </div>
-</div>
-
-<div class="schema-overlay" id="editor-overlay" role="dialog" aria-modal="true" aria-label="Context editor">
+<div class="modal-overlay" id="editor-overlay" role="dialog" aria-modal="true" aria-label="Context editor">
   <div class="panel-header">
     <div style="display:flex; align-items:baseline; gap:0.8rem; min-width:0">
       <h2 style="margin:0" id="editor-title">Edit</h2>
@@ -149,6 +161,7 @@
   window.DIABASE = {
     turnStartUrl: "{% url 'turn_start' project.pk %}",
     turnStreamBase: "{% url 'turn_stream' project.pk 0 %}".replace(/0\/stream\/$/, ""),
+    planBase: "{% url 'plan_json' project.pk 0 %}".replace(/0\/$/, ""),
     schemaUrl: "{% url 'schema_json' project.pk %}",
     auditUrl: "{% url 'audit_partial' project.pk %}",
     auditLogUrl: "{% url 'audit_log' project.pk %}",
@@ -156,11 +169,10 @@
     contextFileGetUrl: "{% url 'context_file_json' project.pk %}",
     contextFileDeleteUrl: "{% url 'context_file_delete' project.pk %}",
     projectUpdateUrl: "{% url 'project_update' project.pk %}",
-    planBase: "{% url 'plan_json' project.pk 0 %}".replace(/0\/$/, ""),
     csrfToken: "{{ csrf_token }}",
     activeTurnId: {{ active_turn_id|default:"null" }},
     activePlanId: {{ active_plan_id|default:"null" }},
   };
 </script>
 {% endblock %}
-{% block scripts %}<script src="{% static 'web/room.js' %}"></script>{% endblock %}
+{% block scripts %}<script type="module" src="{% static 'web/room.js' %}"></script>{% endblock %}

@@ -25,11 +25,14 @@ class TestPages:
         assert r.status_code == 200
         assert b"Room" in r.content
 
-    def test_project_room_renders_orb_and_overlay(self, client, project):
+    def test_project_room_renders_orb_and_workspace(self, client, project):
         r = client.get(reverse("project_room", args=[project.pk]))
         assert r.status_code == 200
         assert b'id="orb"' in r.content
-        assert b"schema-overlay" in r.content
+        assert b'id="workspace"' in r.content
+        # all four workspace tabs are present
+        for pane in (b"pane-schema", b"pane-audit", b"pane-context", b"pane-settings"):
+            assert pane in r.content
         assert b"activeTurnId: null" in r.content
 
     def test_project_room_exposes_running_turn_for_resume(self, client, project):

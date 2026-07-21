@@ -48,6 +48,21 @@ header.top .logo em { font-style: normal; background: linear-gradient(90deg, var
 
 main { max-width: 1240px; margin: 0 auto; padding: 0.5rem 1.6rem 2rem; }
 
+/* the room is an app screen, not a document: it owns the viewport height
+   and never scrolls as a page — the chat log and the panes scroll inside */
+body.app-room { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
+body.app-room header.top { flex: 0 0 auto; }
+body.app-room main {
+  flex: 1 1 auto; min-height: 0; max-width: none; width: 100%;
+  padding: 0 1.2rem 1rem; display: flex;
+}
+
+@media (max-width: 640px) {
+  header.top { padding: 0.6rem 0.9rem; gap: 0.6rem; }
+  header.top .pill { display: none; } /* the orb already tells the agent's state */
+  body.app-room main { padding: 0 0.5rem 0.5rem; }
+}
+
 .card {
   background: var(--panel);
   backdrop-filter: blur(14px);
@@ -138,9 +153,14 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
 .orb[data-state="tool"], .orb[data-state="write"] { --spin: 1s; --morph: 1.8s; animation: orb-breathe 4.5s ease-in-out infinite, orb-hue 14s linear infinite, orb-pulse 0.7s var(--ease); }
 .orb[data-state="write"] { --aura-1: var(--write); --aura-3: var(--write); animation: orb-breathe 4.5s ease-in-out infinite, orb-pulse 0.7s var(--ease); }
 .orb[data-state="error"] { --aura-1: var(--danger); --aura-2: var(--danger); --aura-3: var(--danger); --aura-4: var(--danger); --spin: 4s; animation: orb-breathe 4.5s ease-in-out infinite; }
-.orb-hint { font-size: 0.72rem; color: var(--dim); opacity: 0; transition: opacity 0.3s 0.35s; }
-.orb-wrap:hover .orb-hint { opacity: 1; }
 .orb-label { font-size: 0.78rem; color: var(--dim); min-height: 1.2em; }
+
+/* compact orb for the chat header: same organism, smaller body — it is
+   the ambient status light AND the workspace toggle */
+.orb.orb-mini { width: 38px; height: 38px; flex: 0 0 auto; --ring: 2.5px; }
+.orb.orb-mini .r2 { padding: 2px; }
+.orb.orb-mini .r3 { padding: 1.8px; }
+.orb.orb-mini::after { filter: blur(7px); }
 
 @keyframes orb-breathe { 50% { transform: scale(1.045); } }
 @keyframes orb-pulse { 40% { transform: scale(1.16); } }
@@ -166,31 +186,42 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
   50% { transform: rotate(-30deg) translate(2%, -1.5%); }
 }
 
-/* ---------- schema overlay: the orb, expanded ---------- */
+/* ---------- the room: chat + workspace, side by side ---------- */
 @property --aura-angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
-.overlay-veil {
-  position: fixed; inset: 0; background: rgba(6, 8, 12, 0.55);
-  backdrop-filter: blur(4px); opacity: 0; pointer-events: none;
-  transition: opacity 0.3s var(--ease); z-index: 40;
+@keyframes aura-spin { to { --aura-angle: 360deg; } }
+@keyframes glow-breathe { 50% { opacity: 0.6; } }
+
+.room-shell {
+  flex: 1 1 auto; min-height: 0; width: 100%;
+  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 1.1rem; align-items: stretch;
+  transition: grid-template-columns 0.4s var(--ease);
 }
-.schema-overlay {
-  position: fixed; inset: 7vh 9vw; z-index: 50;
-  background: var(--panel-solid); border-radius: 34px; padding: 1.4rem 1.6rem 0;
-  /* visible: the orbiting glow lives OUTSIDE the box (pseudo at negative
-     inset) and overflow:hidden would clip it away entirely */
-  overflow: visible; display: flex; flex-direction: column;
-  opacity: 0; transform: scale(0.28); transform-origin: var(--orb-x, 50%) var(--orb-y, 20%);
-  pointer-events: none;
-  transition: transform 0.45s var(--ease), opacity 0.35s var(--ease);
+/* orb toggle: the workspace collapses and the chat takes the full width */
+.room-shell[data-ws-open="0"] { grid-template-columns: minmax(0, 1fr) 0fr; gap: 0; }
+.room-shell[data-ws-open="0"] .workspace { opacity: 0; pointer-events: none; }
+
+.chatcol { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.chat-head { display: flex; align-items: center; gap: 0.8rem; padding: 0.55rem 0.2rem 0.6rem; }
+.chat-title { min-width: 0; }
+.chat-title h1 { margin: 0; font-size: 1.05rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-title .sub { font-size: 0.7rem; color: var(--dim); font-family: var(--mono); }
+.chat-head .orb-label { margin-left: auto; text-align: right; }
+.agent-warn { color: var(--write); font-size: 0.8rem; }
+
+/* the workspace panel carries the ORBIT — the product's signature.
+   Idle: a slow ambient orbit; while the agent works (.working, driven by
+   the orb state machine) the glow hurries around the frame. */
+.workspace {
+  position: relative; min-width: 0; min-height: 0;
+  display: flex; flex-direction: column;
+  background: var(--panel-solid); border-radius: 22px;
+  margin: 4px; /* room for the glow */
+  --ospin: 14s;
+  transition: opacity 0.25s var(--ease);
 }
-.schema-overlay .panel-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
-/* glowing orbit border (CSSnippets-style): two layers behind the panel
-   filled with a conic gradient whose ANGLE rotates — colored segments
-   separated by transparent gaps, so the glow visibly travels around the
-   card; the blurred twin underneath is the halo */
-.schema-overlay { --ospin: 5s; }
-.schema-overlay.working { --ospin: 1.4s; }
-.schema-overlay::before, .schema-overlay::after {
+.workspace.working { --ospin: 1.4s; }
+.workspace::before, .workspace::after {
   content: ""; position: absolute; inset: -3px;
   border-radius: inherit; padding: 3px;
   background: conic-gradient(
@@ -204,22 +235,75 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
   animation: aura-spin var(--ospin) linear infinite;
   pointer-events: none;
 }
-.schema-overlay::after {
+.workspace::after {
   inset: -5px; padding: 6px;
-  filter: blur(14px); opacity: 0.95;
+  filter: blur(14px); opacity: 0.9;
   animation: aura-spin var(--ospin) linear infinite, glow-breathe 3.5s ease-in-out infinite;
 }
-@keyframes glow-breathe { 50% { opacity: 0.6; } }
+
+.tabs { display: flex; gap: 0.15rem; padding: 0.55rem 0.9rem 0; flex: 0 0 auto; }
+.tab {
+  background: none; border: 0; color: var(--dim); font: inherit; font-size: 0.8rem;
+  font-weight: 600; padding: 0.45rem 0.85rem; cursor: pointer;
+  border-bottom: 2px solid transparent; border-radius: 10px 10px 0 0;
+  transition: color 0.15s var(--ease);
+}
+.tab:hover { color: var(--txt); filter: none; transform: none; }
+.tab.active { color: var(--txt); border-bottom-color: var(--aura-2); }
+.pane { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0.9rem 1rem 1rem; border-top: 1px solid var(--line); }
+.pane[hidden] { display: none; }
+.pane-flush { padding: 0; overflow: hidden; display: flex; }
+.pane-label { font-size: 0.68rem; margin: 0 0 0.5rem; }
+.pane-label .dim-note { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.dim-note { color: var(--dim); font-size: 0.8rem; }
+
+/* autonomy segmented control: the safety dial, colored on the risk system */
+.seg { display: flex; border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden; }
+.seg-btn {
+  flex: 1; background: none; border: 0; border-radius: 0; color: var(--dim);
+  font: inherit; font-size: 0.78rem; font-weight: 600; padding: 0.5rem 0.4rem; cursor: pointer;
+}
+.seg-btn:hover { filter: none; transform: none; color: var(--txt); }
+.seg-btn + .seg-btn { border-left: 1px solid var(--line); }
+.seg-btn.seg-read_only.on { background: rgba(62, 201, 167, 0.14); color: var(--read); }
+.seg-btn.seg-plan.on { background: rgba(242, 178, 74, 0.14); color: var(--write); }
+.seg-btn.seg-full.on { background: rgba(124, 108, 245, 0.16); color: var(--aura-1); }
+.seg-note { font-size: 0.74rem; color: var(--dim); margin: 0.5rem 0 0; }
+
+/* mobile view strip: one view at a time — chat or a workspace pane */
+.m-tabs { display: none; border-bottom: 1px solid var(--line); flex: 0 0 auto; }
+.m-tabs .mt {
+  flex: 1; background: none; border: 0; color: var(--dim); font: inherit;
+  font-size: 0.74rem; font-weight: 600; padding: 0.5rem 0.2rem; cursor: pointer;
+  border-bottom: 2px solid transparent; border-radius: 0;
+}
+.m-tabs .mt:hover { filter: none; transform: none; }
+.m-tabs .mt.active { color: var(--txt); border-bottom-color: var(--aura-2); }
+
+/* ---------- editor modal (context files + system prompt) ---------- */
+.overlay-veil {
+  position: fixed; inset: 0; background: rgba(6, 8, 12, 0.55);
+  backdrop-filter: blur(4px); opacity: 0; pointer-events: none;
+  transition: opacity 0.3s var(--ease); z-index: 40;
+}
 body.overlay-open .overlay-veil { opacity: 1; pointer-events: auto; }
-.schema-overlay.open { opacity: 1; transform: scale(1); pointer-events: auto; }
-body.overlay-open .orb-wrap .orb { transform: scale(0.6); opacity: 0.25; }
-@keyframes aura-spin { to { --aura-angle: 360deg; } }
+.modal-overlay {
+  position: fixed; inset: 7vh 9vw; z-index: 50;
+  background: var(--panel-solid); border-radius: 28px; padding: 1.4rem 1.6rem 0;
+  border: 1px solid var(--line-strong);
+  display: flex; flex-direction: column;
+  opacity: 0; transform: scale(0.94); pointer-events: none;
+  transition: transform 0.3s var(--ease), opacity 0.25s var(--ease);
+}
+.modal-overlay.open { opacity: 1; transform: scale(1); pointer-events: auto; }
+.modal-overlay .panel-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+@media (max-width: 700px) { .modal-overlay { inset: 3vh 3vw; padding: 1rem 1rem 0; } }
 
 /* ---------- schema canvas: pan/zoom viewport around an auto-layered graph ---------- */
 .schema-viewport {
   position: relative; flex: 1 1 auto; overflow: hidden; cursor: grab;
-  margin: 0 -1.6rem; border-top: 1px solid var(--line);
-  border-radius: 0 0 34px 34px; /* the panel no longer clips: round our own bottom corners */
+  margin: 0; border-top: 1px solid var(--line);
+  border-radius: 0 0 22px 22px; /* matches the workspace panel's own radius */
   background:
     radial-gradient(1px 1px at center, var(--line-strong) 1px, transparent 1.5px) 0 0 / 26px 26px;
 }
@@ -311,8 +395,10 @@ body.overlay-open .orb-wrap .orb { transform: scale(0.6); opacity: 0.25; }
 .prompt-preview:hover { border-color: var(--aura-3); }
 
 /* ---------- chat ---------- */
-#chatlog { display: flex; flex-direction: column; gap: 0.6rem; max-height: 52vh; overflow-y: auto; padding-right: 0.3rem; margin-bottom: 0.8rem; min-width: 0; }
-#chatlog .msg, .room > .card { min-width: 0; }
+/* the log fills whatever height the column gives it — the page never
+   scrolls, the log does; the composer stays put at the bottom */
+#chatlog { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 0.6rem; overflow-y: auto; padding-right: 0.3rem; margin-bottom: 0.8rem; min-width: 0; }
+#chatlog .msg { min-width: 0; }
 .msg { padding: 0.55rem 0.85rem; border-radius: 14px; font-size: 0.92rem; max-width: 88%; animation: rise 0.3s var(--ease) backwards; }
 .msg.user { background: rgba(124, 108, 245, 0.16); align-self: flex-end; white-space: pre-wrap; }
 .msg.assistant { background: rgba(22, 26, 36, 0.9); border: 1px solid var(--line); align-self: flex-start; }
@@ -413,9 +499,24 @@ body.overlay-open .orb-wrap .orb { transform: scale(0.6); opacity: 0.25; }
 .timeline .entry .dot.ok { color: var(--read); }
 .timeline .entry .dot.ko { color: var(--danger); }
 
-.room { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.7fr) minmax(0, 0.9fr); gap: 1rem; align-items: start; }
-@media (max-width: 1180px) { .room { grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); } .room .card.side { grid-column: 1 / -1; order: 3; } }
-@media (max-width: 980px) { .room { grid-template-columns: 1fr; } }
+/* ---------- mobile room: one view at a time ---------- */
+@media (max-width: 980px) {
+  .room-shell { display: flex; flex-direction: column; gap: 0; }
+  .m-tabs { display: flex; }
+  /* the strip decides what's on screen: chat, or the workspace panel */
+  .workspace { display: none; margin: 0.5rem 0 0; }
+  .room-shell[data-m-view="workspace"] .workspace { display: flex; flex: 1 1 auto; opacity: 1; pointer-events: auto; }
+  .room-shell[data-m-view="workspace"] #chatlog,
+  .room-shell[data-m-view="workspace"] .chatbox,
+  .room-shell[data-m-view="workspace"] .chat-hint { display: none; }
+  .workspace .tabs { display: none; } /* the strip replaces the desktop tabs */
+  .chat-head { padding: 0.45rem 0.1rem; }
+  .chat-head .orb-label { display: none; }
+  .msg { max-width: 94%; font-size: 0.88rem; }
+  /* fingers need more than 34px */
+  .zoom-controls button { width: 44px; height: 44px; }
+  .chatbox .send-icon { width: 38px; height: 38px; }
+}
 
 .stack { display: flex; flex-direction: column; gap: 0.5rem; }
 .lbl { font-size: 0.72rem; color: var(--dim); text-transform: uppercase; letter-spacing: 0.06em; }
