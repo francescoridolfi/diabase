@@ -37,9 +37,15 @@ class TestPages:
 
     def test_project_room_exposes_running_turn_for_resume(self, client, project):
         from agents.models import Turn
+        from workspaces.models import Conversation
 
+        conversation = Conversation.objects.create(project=project)
         turn = Turn.objects.create(
-            project=project, backend="claude_code", user_message="hi", status="running"
+            project=project,
+            conversation=conversation,
+            backend="claude_code",
+            user_message="hi",
+            status="running",
         )
         r = client.get(reverse("project_room", args=[project.pk]))
         assert f"activeTurnId: {turn.pk}".encode() in r.content
@@ -83,17 +89,20 @@ class TestCreationFlows:
 class TestTurnStart:
     def test_starts_a_turn_in_the_background(self, client, project):
         from agents.models import Turn
+        from workspaces.models import Conversation
 
+        conversation = Conversation.objects.create(project=project)
         fake_turn = Turn.objects.create(project=project, backend="fake", user_message="tables?")
         with mock.patch("web.views.start_turn", return_value=fake_turn) as st:
             r = client.post(
                 reverse("turn_start", args=[project.pk]),
-                data=json.dumps({"message": "tables?"}),
+                data=json.dumps({"message": "tables?", "conversation_id": conversation.pk}),
                 content_type="application/json",
             )
         assert r.status_code == 200
         assert r.json() == {"turn_id": fake_turn.pk}
         assert st.call_args.args == (project, "tables?")
+        assert st.call_args.kwargs["conversation"] == conversation
 
     def test_rejects_empty_message(self, client, project):
         r = client.post(
@@ -102,6 +111,14 @@ class TestTurnStart:
             content_type="application/json",
         )
         assert r.status_code == 400
+
+    def test_unknown_conversation_404s(self, client, project):
+        r = client.post(
+            reverse("turn_start", args=[project.pk]),
+            data=json.dumps({"message": "hi", "conversation_id": 9999}),
+            content_type="application/json",
+        )
+        assert r.status_code == 404
 
 
 class TestTurnStream:
@@ -290,8 +307,10 @@ class TestConnectionsViews:
 @pytest.fixture
 def proposed_plan(project):
     from agents.models import Plan, PlanStep, Turn
+    from workspaces.models import Conversation
 
-    turn = Turn.objects.create(project=project, backend="fake", user_message="x")
+    conversation = Conversation.objects.create(project=project)
+    turn = Turn.objects.create(project=project, conversation=conversation, backend="fake", user_message="x")
     plan = Plan.objects.create(project=project, turn=turn, status="proposed")
     PlanStep.objects.create(
         plan=plan, order=1, tool="execute_sql", payload={"sql": "CREATE TABLE t (id INTEGER)"}
@@ -363,3 +382,67 @@ class TestPlanViews:
         other = Project.objects.create(name="Other", server=other_server)
         r = client.get(reverse("plan_json", args=[other.pk, proposed_plan.pk]))
         assert r.status_code == 404
+
+
+class TestConversationsViews:
+    def test_room_creates_a_conversation_when_none_exists(self, client, project):
+        from workspaces.models import Conversation
+
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert r.status_code == 200
+        assert Conversation.objects.filter(project=project).count() == 1
+        conversation = Conversation.objects.get()
+        assert f"conversationId: {conversation.pk}".encode() in r.content
+
+    def test_room_selects_the_requested_chat(self, client, project):
+        from workspaces.models import ChatMessage, Conversation
+
+        a = Conversation.objects.create(project=project, title="Thread A")
+        b = Conversation.objects.create(project=project, title="Thread B")
+        ChatMessage.objects.create(project=project, conversation=b, role="user", content="only in B")
+        r = client.get(reverse("project_room", args=[project.pk]) + f"?chat={b.pk}")
+        assert b"only in B" in r.content
+        assert f"conversationId: {b.pk}".encode() in r.content
+        r2 = client.get(reverse("project_room", args=[project.pk]) + f"?chat={a.pk}")
+        assert b"only in B" not in r2.content
+
+    def test_chat_of_another_project_404s(self, client, project, tmp_path):
+        from workspaces.models import Conversation
+
+        other_server = Server.objects.create(name="S2", adapter_type="sqlite", dsn=str(tmp_path / "o.db"))
+        other = Project.objects.create(name="Other", server=other_server)
+        foreign = Conversation.objects.create(project=other)
+        r = client.get(reverse("project_room", args=[project.pk]) + f"?chat={foreign.pk}")
+        assert r.status_code == 404
+
+    def test_create_and_delete_are_audited(self, client, project):
+        from workspaces.models import ChatMessage, Conversation
+
+        r = client.post(reverse("chat_create", args=[project.pk]))
+        assert r.status_code == 302
+        conversation = Conversation.objects.get()
+        assert AuditEntry.objects.filter(action="chat.created").exists()
+
+        ChatMessage.objects.create(project=project, conversation=conversation, role="user", content="x")
+        r = client.post(reverse("chat_delete", args=[project.pk, conversation.pk]))
+        assert r.status_code == 302
+        assert not Conversation.objects.exists()
+        assert not ChatMessage.objects.exists()  # cascade
+        assert AuditEntry.objects.filter(action="chat.deleted").exists()
+
+    def test_deleting_a_chat_keeps_the_audit_trail(self, client, project):
+        from audit.services import record
+        from workspaces.models import Conversation
+
+        conversation = Conversation.objects.create(project=project)
+        record(action="execute_sql", actor_type="agent", project=project, payload_in={"sql": "SELECT 1"})
+        client.post(reverse("chat_delete", args=[project.pk, conversation.pk]))
+        assert AuditEntry.objects.filter(action="execute_sql").exists()
+
+    def test_sidebar_lists_chats(self, client, project):
+        from workspaces.models import Conversation
+
+        Conversation.objects.create(project=project, title="RLS policies")
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert b"RLS policies" in r.content
+        assert b'id="sidebar"' in r.content

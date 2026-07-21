@@ -5,6 +5,7 @@ import time
 
 from django.http import JsonResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -76,16 +77,31 @@ def project_create(request):
 
 
 def project_room(request, pk):
+    from workspaces.models import Conversation
+
     project = get_object_or_404(Project.objects.select_related("server"), pk=pk)
-    active_turn = project.turns.filter(status="running").order_by("-started_at").first()
+    conversations = list(project.conversations.all())
+    selected = None
+    if request.GET.get("chat"):
+        selected = get_object_or_404(Conversation, pk=request.GET["chat"], project=project)
+    elif conversations:
+        selected = conversations[0]  # most recently active
+    else:
+        selected = Conversation.objects.create(project=project)
+        conversations = [selected]
+    active_turn = selected.turns.filter(status="running").order_by("-started_at").first()
     # a plan awaiting a decision (or being applied) must survive a refresh
-    active_plan = project.plans.filter(status__in=["proposed", "applying"]).first()
+    active_plan = project.plans.filter(
+        status__in=["proposed", "applying"], turn__conversation=selected
+    ).first()
     return render(
         request,
         "web/project.html",
         {
             "project": project,
-            "chat": project.messages.all(),
+            "conversations": conversations,
+            "conversation": selected,
+            "chat": selected.messages.all(),
             "audit_entries": project.audit_entries.all()[:10],
             "context_files": project.context_files.all(),
             "autonomy_choices": Project.AUTONOMY_LEVELS,
@@ -287,8 +303,46 @@ def turn_start(request, pk):
     message = (body.get("message") or "").strip()
     if not message:
         return JsonResponse({"error": "Empty message"}, status=400)
-    turn = start_turn(project, message, user=_actor(request))
+    from workspaces.models import Conversation
+
+    conversation = get_object_or_404(Conversation, pk=body.get("conversation_id"), project=project)
+    turn = start_turn(project, message, user=_actor(request), conversation=conversation)
     return JsonResponse({"turn_id": turn.pk})
+
+
+@require_POST
+def chat_create(request, pk):
+    from workspaces.models import Conversation
+
+    project = get_object_or_404(Project, pk=pk)
+    conversation = Conversation.objects.create(project=project)
+    record(
+        action="chat.created",
+        actor_type="user",
+        actor=_actor(request),
+        project=project,
+        payload_out={"conversation": conversation.pk},
+    )
+    return redirect(f"{reverse('project_room', args=[project.pk])}?chat={conversation.pk}")
+
+
+@require_POST
+def chat_delete(request, pk, chat_id):
+    """Deletes the thread (messages, turns, plans cascade); the audit
+    trail keeps everything that ever touched the instance."""
+    from workspaces.models import Conversation
+
+    project = get_object_or_404(Project, pk=pk)
+    conversation = get_object_or_404(Conversation, pk=chat_id, project=project)
+    record(
+        action="chat.deleted",
+        actor_type="user",
+        actor=_actor(request),
+        project=project,
+        payload_in={"conversation": conversation.pk, "title": conversation.title},
+    )
+    conversation.delete()
+    return redirect("project_room", pk=project.pk)
 
 
 def _plan_payload(plan) -> dict:
