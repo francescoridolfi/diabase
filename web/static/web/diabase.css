@@ -39,29 +39,30 @@ body {
 }
 a { color: inherit; text-decoration: none; }
 
-header.top {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0.9rem 1.6rem;
+/* ---------- app shell: the sidebar is the navigation, on EVERY page ---------- */
+.app-shell { display: flex; min-height: 100dvh; }
+.sidebar {
+  width: 232px; flex: 0 0 auto;
+  position: sticky; top: 0; height: 100dvh;
+  display: flex; flex-direction: column; min-height: 0;
+  border-right: 1px solid var(--line);
+  padding: 0.8rem 0.8rem 0.7rem 1rem;
+  background: rgba(13, 16, 23, 0.55);
 }
-header.top .logo { font-weight: 700; letter-spacing: 0.02em; }
-header.top .logo em { font-style: normal; background: linear-gradient(90deg, var(--aura-1), var(--aura-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
-
-main { max-width: 1240px; margin: 0 auto; padding: 0.5rem 1.6rem 2rem; }
+.side-head { font-weight: 700; letter-spacing: 0.02em; padding: 0.1rem 0.2rem 0.8rem; display: block; }
+.side-head em { font-style: normal; background: linear-gradient(90deg, var(--aura-1), var(--aura-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.side-nav { display: flex; flex-direction: column; gap: 2px; }
+.app-main { flex: 1 1 auto; min-width: 0; padding: 1.2rem 1.6rem 2rem; }
+.page { max-width: 1100px; margin: 0 auto; }
+.page h1 { margin-top: 0; }
 
 /* the room is an app screen, not a document: it owns the viewport height
    and never scrolls as a page — the chat log and the panes scroll inside */
-body.app-room { height: 100dvh; overflow: hidden; display: flex; flex-direction: column; }
-body.app-room header.top { flex: 0 0 auto; }
-body.app-room main {
-  flex: 1 1 auto; min-height: 0; max-width: none; width: 100%;
-  padding: 0 1.2rem 1rem; display: flex;
-}
+body.app-room { height: 100dvh; overflow: hidden; }
+body.app-room .app-shell { height: 100dvh; }
+body.app-room .app-main { display: flex; min-height: 0; padding: 0 1.2rem 0.9rem; }
 
-@media (max-width: 640px) {
-  header.top { padding: 0.6rem 0.9rem; gap: 0.6rem; }
-  header.top .pill { display: none; } /* the orb already tells the agent's state */
-  body.app-room main { padding: 0 0.5rem 0.5rem; }
-}
+.page-burger { position: fixed; top: 0.7rem; left: 0.7rem; z-index: 30; }
 
 .card {
   background: var(--panel);
@@ -201,6 +202,64 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
 .room-shell[data-ws-open="0"] { grid-template-columns: minmax(0, 1fr) 0fr; gap: 0; }
 .room-shell[data-ws-open="0"] .workspace { opacity: 0; pointer-events: none; }
 
+/* ---------- sidebar content: the room adds chats to the global nav ---------- */
+.proj-switch {
+  display: flex; align-items: center; gap: 0.5rem;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  padding: 0.5rem 0.7rem; font-size: 0.85rem; margin-bottom: 0.5rem;
+  transition: border-color 0.15s var(--ease);
+}
+.proj-switch:hover { border-color: var(--aura-3); }
+.proj-switch .pdot { width: 8px; height: 8px; border-radius: 50%; background: var(--aura-2); flex: 0 0 auto; }
+.proj-switch .pname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.proj-switch .chev { color: var(--dim); font-size: 0.7rem; }
+.side-label {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--dim); padding: 0.5rem 0.2rem 0.3rem;
+}
+.side-new {
+  background: none; border: 1px solid var(--line-strong); color: var(--dim);
+  border-radius: 7px; width: 22px; height: 22px; line-height: 1; padding: 0; font-size: 0.9rem;
+}
+.side-new:hover { color: var(--txt); border-color: var(--aura-3); filter: none; transform: none; }
+.chats { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.chat-item {
+  position: relative; border-radius: 9px; border: 1px solid transparent;
+  transition: background 0.15s var(--ease);
+}
+.chat-item > a { display: flex; flex-direction: column; gap: 0.05rem; padding: 0.45rem 1.7rem 0.45rem 0.65rem; }
+.chat-item:hover { background: rgba(148, 163, 199, 0.08); }
+.chat-item.active { background: rgba(124, 108, 245, 0.13); border-color: rgba(124, 108, 245, 0.35); }
+.chat-item .chat-name {
+  font-size: 0.84rem; color: var(--dim);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-item.active .chat-name { color: var(--txt); }
+.chat-item .when { font-size: 0.64rem; font-family: var(--mono); color: var(--dim); opacity: 0.65; }
+.chat-del {
+  background: none; border: 0; color: var(--dim); padding: 0.2rem 0.3rem;
+  font-size: 0.75rem; opacity: 0; transition: opacity 0.15s var(--ease);
+}
+.chat-item .chat-del { position: absolute; right: 0.35rem; top: 50%; transform: translateY(-50%); }
+.chat-item:hover .chat-del, .chat-del:focus-visible { opacity: 1; }
+.chat-del:hover { color: var(--danger); filter: none; }
+.chat-item .chat-del:hover { transform: translateY(-50%); }
+.side-foot { border-top: 1px solid var(--line); margin-top: 0.5rem; padding-top: 0.45rem; display: flex; flex-direction: column; gap: 2px; }
+.side-link {
+  display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.65rem;
+  border-radius: 9px; font-size: 0.82rem; color: var(--dim);
+}
+.side-link:hover { background: rgba(148, 163, 199, 0.08); color: var(--txt); }
+.side-link.on { background: rgba(124, 108, 245, 0.13); color: var(--txt); }
+.side-link .ic { width: 1.1rem; text-align: center; opacity: 0.9; }
+.burger { display: none; }
+
+/* listing rows: the link area inside a .file-row (projects page) */
+.row-link { min-width: 0; flex: 1 1 auto; display: flex; }
+.row-link .fname { color: var(--txt); }
+.row-link:hover .fname { color: var(--aura-3); }
+
 .chatcol { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .chat-head { display: flex; align-items: center; gap: 0.8rem; padding: 0.55rem 0.2rem 0.6rem; }
 .chat-title { min-width: 0; }
@@ -298,6 +357,36 @@ body.overlay-open .overlay-veil { opacity: 1; pointer-events: auto; }
 .modal-overlay.open { opacity: 1; transform: scale(1); pointer-events: auto; }
 .modal-overlay .panel-header { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
 @media (max-width: 700px) { .modal-overlay { inset: 3vh 3vw; padding: 1rem 1rem 0; } }
+
+/* compact modal: a centered dialog for small creation forms */
+.modal-overlay.modal-sm {
+  inset: auto; top: 50%; left: 50%;
+  width: min(460px, 92vw); max-height: 86dvh; overflow-y: auto;
+  border-radius: 20px; padding: 1.2rem 1.4rem 1.4rem;
+  transform: translate(-50%, -50%) scale(0.94);
+}
+.modal-overlay.modal-sm.open { transform: translate(-50%, -50%) scale(1); }
+.modal-overlay.modal-sm .panel-header { margin-bottom: 0.8rem; }
+
+/* card heading with the "add a row" affordance anchored right */
+.card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 0.8rem;
+}
+.card-head h2 { margin: 0; }
+.add-btn {
+  position: relative; width: 28px; height: 28px; padding: 0; flex: 0 0 auto;
+  border-radius: 50%; display: grid; place-items: center;
+  font-size: 1.05rem; line-height: 1; font-weight: 500; color: var(--txt);
+  background: var(--panel-solid); border: 0; cursor: pointer;
+}
+/* the aura ring: same conic language as the orb, at button scale */
+.add-btn::before {
+  content: ""; position: absolute; inset: -1.5px; z-index: -1; border-radius: 50%;
+  background: conic-gradient(from var(--aura-angle), var(--aura-1), var(--aura-2), var(--aura-3), var(--aura-4), var(--aura-1));
+  animation: aura-spin 7s linear infinite;
+}
+.add-btn:hover { transform: scale(1.1); filter: none; box-shadow: 0 0 14px rgba(124, 108, 245, 0.45); }
 
 /* ---------- schema canvas: pan/zoom viewport around an auto-layered graph ---------- */
 .schema-viewport {
@@ -503,6 +592,25 @@ body.overlay-open .overlay-veil { opacity: 1; pointer-events: auto; }
 @media (max-width: 980px) {
   .room-shell { display: flex; flex-direction: column; gap: 0; }
   .m-tabs { display: flex; }
+  /* the sidebar becomes a drawer, opened by the burger — on EVERY page */
+  .sidebar {
+    display: none; position: fixed; inset: 0 26% 0 0; z-index: 60;
+    width: auto; height: 100dvh;
+    background: rgba(13, 16, 23, 0.97); backdrop-filter: blur(6px);
+    border-right: 1px solid var(--line-strong); padding: 0.8rem 0.7rem;
+  }
+  .app-shell[data-drawer="1"] .sidebar { display: flex; animation: drawer-in 0.25s var(--ease); }
+  @keyframes drawer-in { from { transform: translateX(-14px); opacity: 0; } }
+  .burger {
+    display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 auto;
+    background: none; border: 1px solid var(--line-strong); border-radius: 10px;
+    color: var(--dim); font-size: 1rem; padding: 0;
+  }
+  .burger:hover { filter: none; transform: none; color: var(--txt); }
+  .chat-item .chat-del { opacity: 1; } /* no hover on touch */
+  .app-main { padding: 1rem 0.9rem 1.5rem; }
+  .page { padding-top: 2.4rem; } /* clear the floating burger */
+  body.app-room .app-main { padding: 0 0.5rem 0.5rem; }
   /* the strip decides what's on screen: chat, or the workspace panel */
   .workspace { display: none; margin: 0.5rem 0 0; }
   .room-shell[data-m-view="workspace"] .workspace { display: flex; flex: 1 1 auto; opacity: 1; pointer-events: auto; }

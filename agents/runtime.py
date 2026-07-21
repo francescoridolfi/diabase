@@ -27,7 +27,7 @@ from django.utils import timezone
 
 from audit.services import AuditedAdapter, record
 from instances.adapters import get_adapter
-from workspaces.models import ChatMessage, Project
+from workspaces.models import ChatMessage, Conversation, Project
 
 from .backends.anthropic_api import AnthropicAPIBackend
 from .backends.base import AgentBackend, PlanProposed, TurnCompleted, TurnEvent, TurnFailed
@@ -74,6 +74,9 @@ def get_backend(name: str | None = None, project: Project | None = None) -> Agen
 
 
 def _prepare(project: Project, backend: AgentBackend, autonomy_level: str | None, turn=None):
+    """History comes from the TURN's conversation, not the whole project:
+    each chat carries only its own past, so long-lived projects don't pay
+    for every old thread on every new turn."""
     server = project.server
     level = autonomy_level or getattr(project, "autonomy_level", None) or DEFAULT_LEVEL
     adapter = AuditedAdapter(
@@ -85,9 +88,10 @@ def _prepare(project: Project, backend: AgentBackend, autonomy_level: str | None
     toolset = BoundToolset(
         adapter=adapter, policy=AutonomyPolicy(level), project=project, actor=backend.name, turn=turn
     )
+    messages = turn.conversation.messages.all() if turn and turn.conversation else []
     history = [
         {"role": m.role, "content": m.content}
-        for m in project.messages.all()
+        for m in messages
         if m.role in ("user", "assistant") and m.content.strip()
     ]
     return toolset, history
@@ -100,22 +104,33 @@ def _start(
     backend_name: str | None,
     autonomy_level: str | None,
     message_kind: str = "chat",
+    conversation: Conversation | None = None,
 ):
     """Shared synchronous setup: resolve backend, create the Turn row,
     persist + audit the user's message. Both run_turn and start_turn need
     exactly this, before execution (sync or threaded) takes over."""
     from .models import Turn
 
+    if conversation is None:
+        conversation = Conversation.objects.create(project=project)
+    if not conversation.title:
+        conversation.title = user_message.splitlines()[0][:80]
+    conversation.save()  # bumps updated_at: the sidebar orders by recency
+
     backend = get_backend(backend_name, project)
     turn = Turn.objects.create(
         project=project,
+        conversation=conversation,
         backend=backend.name,
         model=getattr(backend, "model", ""),
         user_message=user_message,
     )
-    # the toolset needs the Turn: queued plan steps attach to it
+    # the toolset needs the Turn: queued plan steps attach to it, and the
+    # conversation on it scopes the history
     toolset, history = _prepare(project, backend, autonomy_level, turn)
-    ChatMessage.objects.create(project=project, role="user", content=user_message, kind=message_kind)
+    ChatMessage.objects.create(
+        project=project, conversation=conversation, role="user", content=user_message, kind=message_kind
+    )
     record(
         action="chat.message",
         actor_type="user" if message_kind == "chat" else "system",
@@ -135,7 +150,9 @@ def _drive(
         turn.finished_at = timezone.now()
         turn.save(update_fields=["status", "error", "finished_at"])
         if reply:
-            ChatMessage.objects.create(project=project, role="assistant", content=reply)
+            ChatMessage.objects.create(
+                project=project, conversation=turn.conversation, role="assistant", content=reply
+            )
             record(
                 action="chat.reply",
                 actor_type="agent",
@@ -199,10 +216,13 @@ def run_turn(
     backend_name: str | None = None,
     autonomy_level: str | None = None,
     user: str = "",
+    conversation: Conversation | None = None,
 ) -> Iterator[TurnEvent]:
     """Drive a turn to completion synchronously, yielding events as they
     happen. Used by tests and any in-process caller."""
-    turn, backend, toolset, history = _start(project, user_message, user, backend_name, autonomy_level)
+    turn, backend, toolset, history = _start(
+        project, user_message, user, backend_name, autonomy_level, conversation=conversation
+    )
     yield from _drive(turn, project, backend, toolset, history, user_message)
 
 
@@ -214,6 +234,7 @@ def start_turn(
     autonomy_level: str | None = None,
     user: str = "",
     message_kind: str = "chat",
+    conversation: Conversation | None = None,
 ):
     """Create the Turn synchronously, execute it on a background thread.
 
@@ -225,7 +246,7 @@ def start_turn(
     from .models import TurnEvent as TurnEventRow
 
     turn, backend, toolset, history = _start(
-        project, user_message, user, backend_name, autonomy_level, message_kind
+        project, user_message, user, backend_name, autonomy_level, message_kind, conversation
     )
 
     def worker():
@@ -279,6 +300,7 @@ def reject_plan(plan, *, user: str = ""):
     _decide(plan, "rejected", "plan.rejected", user)
     ChatMessage.objects.create(
         project=plan.project,
+        conversation=plan.turn.conversation,
         role="user",
         kind="plan_result",
         content=f"Plan #{plan.pk} was rejected by the user. None of its steps were executed.",
@@ -291,7 +313,7 @@ def revise_plan(plan, comment: str, *, user: str = ""):
     fresh turn — it proposes a new plan informed by the feedback."""
     _decide(plan, "superseded", "plan.superseded", user)
     message = f"Plan #{plan.pk} was not applied. Revise it: {comment}"
-    return start_turn(plan.project, message, user=user)
+    return start_turn(plan.project, message, user=user, conversation=plan.turn.conversation)
 
 
 def _decide(plan, status: str, action: str, user: str):
@@ -349,8 +371,15 @@ def _apply(plan, user: str):
         error=plan.error,
     )
 
-    # incremental apply: the agent continues from the REAL results
-    turn = start_turn(project, _apply_report(plan), user=user, message_kind="plan_result")
+    # incremental apply: the agent continues from the REAL results,
+    # in the same conversation that proposed the plan
+    turn = start_turn(
+        project,
+        _apply_report(plan),
+        user=user,
+        message_kind="plan_result",
+        conversation=plan.turn.conversation,
+    )
     plan.continuation_turn = turn
     plan.save(update_fields=["continuation_turn"])
 

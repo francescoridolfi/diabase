@@ -66,13 +66,36 @@ class ContextFile(models.Model):
         return len(self.content.encode())
 
 
+class Conversation(models.Model):
+    """One chat thread inside a project.
+
+    The project owns the knowledge (context files, system prompt,
+    connection, autonomy); conversations are where work happens — each
+    carries its own history, so long-lived projects don't drag every
+    past exchange into every new turn's context window.
+    """
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="conversations")
+    # auto-derived from the first message; empty until then
+    title = models.CharField(max_length=80, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+
+    def __str__(self):
+        return f"{self.title or f'Chat #{self.pk}'} ({self.project})"
+
+
 class ChatMessage(models.Model):
-    """One message of a project's conversation (user or agent)."""
+    """One message of a project conversation (user or agent)."""
 
     ROLES = [("user", "User"), ("assistant", "Assistant")]
     KINDS = [("chat", "Chat"), ("plan_result", "Plan result")]
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="messages")
+    conversation = models.ForeignKey(Conversation, on_delete=models.CASCADE, related_name="messages")
     role = models.CharField(max_length=10, choices=ROLES)
     # plan_result rows are system-generated (apply outcomes fed back to the
     # agent); they ride in history as user-role turns but render differently

@@ -469,7 +469,12 @@ class TestAgentConnections:
 
 
 def make_turn(project, **kw):
-    return Turn.objects.create(project=project, backend="fake", user_message="x", **kw)
+    from workspaces.models import Conversation
+
+    conversation = kw.pop("conversation", None) or Conversation.objects.create(project=project)
+    return Turn.objects.create(
+        project=project, conversation=conversation, backend="fake", user_message="x", **kw
+    )
 
 
 def make_proposed_plan(project, sqls):
@@ -652,4 +657,51 @@ class TestPlanDecisions:
         assert plan.status == "superseded"
         assert f"Plan #{plan.pk} was not applied" in turn.user_message
         assert "use TEXT ids instead" in turn.user_message
+        # the revision turn stays in the conversation that proposed the plan
+        assert turn.conversation == plan.turn.conversation
         assert AuditEntry.objects.filter(action="plan.superseded").exists()
+
+
+class TestConversations:
+    def test_history_is_scoped_to_the_conversation(self, project):
+        from workspaces.models import Conversation
+
+        other = Conversation.objects.create(project=project, title="Other thread")
+        ChatMessage.objects.create(
+            project=project, conversation=other, role="user", content="SECRET other-thread message"
+        )
+
+        captured = {}
+
+        class CapturingBackend(FakeBackend):
+            def run(self, *, history, **kwargs):
+                captured["history"] = history
+                yield TurnCompleted(reply="ok")
+
+        with mock.patch("agents.runtime.get_backend", return_value=CapturingBackend([])):
+            list(run_turn(project, "hello"))
+        # the fresh conversation sees nothing from the other thread
+        assert captured["history"] == []
+
+    def test_first_message_titles_the_conversation(self, project):
+        with mock.patch("agents.runtime.get_backend", return_value=FakeBackend([TurnCompleted(reply="hi")])):
+            list(run_turn(project, "Add a reviews table\nwith ratings"))
+        from workspaces.models import Conversation
+
+        conversation = Conversation.objects.get()
+        assert conversation.title == "Add a reviews table"
+        assert conversation.messages.count() == 2  # user + reply, both attached
+
+    def test_apply_continuation_stays_in_the_plans_conversation(self, project):
+        from agents.runtime import approve_plan
+
+        plan = make_proposed_plan(project, ["CREATE TABLE t (id INTEGER)"])
+        with (
+            mock.patch("agents.runtime.get_backend", return_value=FakeBackend([TurnCompleted(reply="ok")])),
+            mock.patch("agents.runtime.threading.Thread", _ImmediateThread),
+        ):
+            approve_plan(plan, user="francesco")
+        plan.refresh_from_db()
+        assert plan.continuation_turn.conversation == plan.turn.conversation
+        report = ChatMessage.objects.get(kind="plan_result")
+        assert report.conversation == plan.turn.conversation

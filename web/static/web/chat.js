@@ -121,7 +121,7 @@ export function initChat({ log, form, msgEl, orb, urls, csrf, hooks }) {
       const resp = await fetch(urls.turnStartUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-CSRFToken": csrf() },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, conversation_id: urls.conversationId }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error || "could not start the turn");

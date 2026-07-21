@@ -2,17 +2,47 @@
 {% load static %}
 {% block title %}{{ project.name }} — Diabase{% endblock %}
 {% block bodyclass %}app-room{% endblock %}
+{% block burger %}{% endblock %}{# the room's burger lives in the chat header #}
+{% block sidebar %}
+<a class="proj-switch" href="{% url 'home' %}" title="All projects">
+  <span class="pdot"></span>
+  <span class="pname">{{ project.name }}</span>
+  <span class="chev">▾</span>
+</a>
+<div class="side-label">Chat
+  <form method="post" action="{% url 'chat_create' project.pk %}">{% csrf_token %}
+    <button type="submit" class="side-new" title="New chat" aria-label="New chat">+</button>
+  </form>
+</div>
+<div class="chats">
+  {% for c in conversations %}
+  <div class="chat-item {% if c.pk == conversation.pk %}active{% endif %}">
+    <a href="{% url 'project_room' project.pk %}?chat={{ c.pk }}">
+      <span class="chat-name">{{ c.title|default:"New chat" }}</span>
+      <span class="when">{{ c.updated_at|date:"j M · H:i" }}</span>
+    </a>
+    <form method="post" action="{% url 'chat_delete' project.pk c.pk %}"
+          onsubmit="return confirm('Delete this chat? Its messages and plans go with it; the audit trail stays.')">
+      {% csrf_token %}
+      <button type="submit" class="chat-del" title="Delete chat" aria-label="Delete chat">✕</button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+<div class="side-foot">{% include "web/_nav.html" %}</div>
+{% endblock %}
 {% block content %}
 <div class="room-shell" id="room-shell" data-ws-open="1">
 
   <section class="chatcol">
     <div class="chat-head">
+      <button class="burger" id="burger" aria-label="Chats menu" title="Chats">☰</button>
       <div class="orb orb-mini" id="orb" data-state="idle" role="button" tabindex="0"
            aria-label="Toggle workspace panel" aria-pressed="true" title="Workspace (schema, audit, context)">
         <div class="ring r2"></div><div class="ring r3"></div>
       </div>
       <div class="chat-title">
-        <h1>{{ project.name }}</h1>
+        <h1>{{ conversation.title|default:"New chat" }}</h1>
         <span class="sub">{{ project.server.name }} · {{ project.server.adapter_type }} · {{ project.get_autonomy_level_display }}</span>
       </div>
       <div class="orb-label" id="orb-label"></div>
@@ -120,7 +150,7 @@
           <option value="{{ c.pk }}" {% if project.agent_connection_id == c.pk %}selected{% endif %}>{{ c.name }} — {{ c.get_backend_display }}</option>
           {% endfor %}
         </select>
-        <p class="muted" style="margin:0"><a href="{% url 'connections' %}" style="color:var(--aura-3)">Manage connections →</a></p>
+        <p class="muted" style="margin:0"><a href="{% url 'settings' %}" style="color:var(--aura-3)">Manage LLM connections →</a></p>
       </form>
 
       <h2 class="pane-label" style="margin-top:1.1rem">Server</h2>
@@ -133,7 +163,6 @@
   </aside>
 </div>
 
-<div class="overlay-veil" id="veil"></div>
 <div class="modal-overlay" id="editor-overlay" role="dialog" aria-modal="true" aria-label="Context editor">
   <div class="panel-header">
     <div style="display:flex; align-items:baseline; gap:0.8rem; min-width:0">
@@ -170,6 +199,7 @@
     contextFileDeleteUrl: "{% url 'context_file_delete' project.pk %}",
     projectUpdateUrl: "{% url 'project_update' project.pk %}",
     csrfToken: "{{ csrf_token }}",
+    conversationId: {{ conversation.pk }},
     activeTurnId: {{ active_turn_id|default:"null" }},
     activePlanId: {{ active_plan_id|default:"null" }},
   };

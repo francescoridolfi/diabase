@@ -67,6 +67,7 @@ const chat = initChat({
 const plan = initPlan({ log: document.getElementById("chatlog"), chat, orb, timeline, urls, csrf });
 
 initContext({ chat, urls, csrf });
+// the sidebar drawer is handled globally by shell.js
 
 // a turn already running when this page loaded (started before a refresh,
 // or from another tab) — reconnect from the beginning: every event is

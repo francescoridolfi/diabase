@@ -1,46 +1,58 @@
 {% extends "web/base.html" %}
+{% block title %}Projects — Diabase{% endblock %}
 {% block content %}
-<h1>Your projects</h1>
+<div class="page">
+  <h1>Projects</h1>
+  <p class="muted" style="margin-top:-0.5rem">
+    A project binds one database instance to its agent: chats, context files, autonomy and audit.
+  </p>
 
-<div class="grid" style="grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));">
-  {% for p in projects %}
-  <a class="card" href="{% url 'project_room' p.pk %}" style="display:block">
-    <div style="display:flex; align-items:center; gap:0.7rem;">
-      <div class="orb" style="width:34px;height:34px;--ring:2.5px;cursor:default"></div>
-      <div>
-        <div style="font-weight:600">{{ p.name }}</div>
-        <div style="font-size:0.78rem;color:var(--dim)">{{ p.server.name }} · {{ p.server.adapter_type }}</div>
-      </div>
+  <div class="card" style="margin-top:1rem">
+    <div class="card-head">
+      <h2>Your projects ({{ projects|length }})</h2>
+      <button class="add-btn" data-modal-open="modal-new-project" title="New project" aria-label="New project">+</button>
     </div>
-  </a>
-  {% empty %}
-  <div class="card" style="grid-column: 1 / -1; text-align:center; color:var(--dim)">
-    No projects yet — connect an instance below and Diabase creates the first one for you.
+    <div class="stack">
+      {% for p in projects %}
+      <div class="file-row" style="cursor:default">
+        <a href="{% url 'project_room' p.pk %}" class="row-link">
+          <span class="fname">{{ p.name }}</span>
+        </a>
+        <span class="pill">{{ p.server.adapter_type }}</span>
+        <span class="muted">{{ p.server.name }}</span>
+        <span class="pill {% if p.autonomy_level == 'plan' %}warn{% elif p.autonomy_level == 'read_only' %}ok{% endif %}">{{ p.get_autonomy_level_display }}</span>
+        <form method="post" action="{% url 'project_delete' p.pk %}" style="margin-left:auto"
+              onsubmit="return confirm('Delete project “{{ p.name }}”? Its chats and plans go with it; the audit trail survives. The database instance itself is NOT touched.')">
+          {% csrf_token %}
+          <button class="ghost" style="color:var(--danger); font-size:0.75rem; padding:0.25rem 0.6rem">Delete</button>
+        </form>
+      </div>
+      {% empty %}
+      <p class="muted">No projects yet — hit «+» above{% if not servers %}
+        (you'll need a <a href="{% url 'connections' %}" style="color:var(--aura-3)">connection</a> first){% endif %}.</p>
+      {% endfor %}
+    </div>
   </div>
-  {% endfor %}
 </div>
 
-<div class="grid" style="grid-template-columns: 1fr 1fr; margin-top:1rem;">
-  <div class="card">
-    <h2>Connect an instance</h2>
-    <form method="post" action="{% url 'server_create' %}" style="display:flex; flex-direction:column; gap:0.6rem;">{% csrf_token %}
-      <input name="name" placeholder="Name (e.g. Production)" required>
-      <select name="adapter_type">
-        {% for value, label in adapter_choices %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
-      </select>
-      <input name="dsn" placeholder="Path, DSN, or Supabase project ref" required>
-      <button>Connect</button>
-    </form>
+<div class="modal-overlay modal-sm" id="modal-new-project" role="dialog" aria-modal="true" aria-label="New project">
+  <div class="panel-header">
+    <h2 style="margin:0">New project</h2>
+    <button class="ghost" data-close>Close (Esc)</button>
   </div>
-  <div class="card">
-    <h2>New project on an existing instance</h2>
-    <form method="post" action="{% url 'project_create' %}" style="display:flex; flex-direction:column; gap:0.6rem;">{% csrf_token %}
-      <select name="server_id">
-        {% for s in servers %}<option value="{{ s.pk }}">{{ s.name }} ({{ s.adapter_type }})</option>{% endfor %}
-      </select>
-      <input name="name" placeholder="Project name" required>
-      <button {% if not servers %}disabled{% endif %}>Create project</button>
-    </form>
-  </div>
+  {% if servers %}
+  <form method="post" action="{% url 'project_create' %}" class="stack">{% csrf_token %}
+    <label class="lbl">Instance</label>
+    <select name="server_id">
+      {% for s in servers %}<option value="{{ s.pk }}">{{ s.name }} ({{ s.adapter_type }})</option>{% endfor %}
+    </select>
+    <label class="lbl">Project name</label>
+    <input name="name" placeholder="e.g. cucina-it" required>
+    <button>Create project</button>
+  </form>
+  {% else %}
+  <p class="muted">Connect a database instance first —
+    <a href="{% url 'connections' %}" style="color:var(--aura-3)">Connections →</a></p>
+  {% endif %}
 </div>
 {% endblock %}

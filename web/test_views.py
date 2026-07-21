@@ -37,9 +37,15 @@ class TestPages:
 
     def test_project_room_exposes_running_turn_for_resume(self, client, project):
         from agents.models import Turn
+        from workspaces.models import Conversation
 
+        conversation = Conversation.objects.create(project=project)
         turn = Turn.objects.create(
-            project=project, backend="claude_code", user_message="hi", status="running"
+            project=project,
+            conversation=conversation,
+            backend="claude_code",
+            user_message="hi",
+            status="running",
         )
         r = client.get(reverse("project_room", args=[project.pk]))
         assert f"activeTurnId: {turn.pk}".encode() in r.content
@@ -65,13 +71,15 @@ class TestPages:
 
 
 class TestCreationFlows:
-    def test_server_create_makes_project_and_audits(self, client, tmp_path):
+    def test_server_create_audits_without_creating_a_project(self, client, tmp_path):
         r = client.post(
             reverse("server_create"),
             {"name": "Prod", "adapter_type": "sqlite", "dsn": str(tmp_path / "p.db")},
         )
-        assert r.status_code == 302
-        assert Project.objects.filter(name="Prod").exists()
+        assert r.status_code == 302 and r.url == reverse("connections")
+        assert Server.objects.filter(name="Prod").exists()
+        # projects are created explicitly from the Projects page now
+        assert not Project.objects.filter(name="Prod").exists()
         assert AuditEntry.objects.filter(action="server.connected").exists()
 
     def test_project_create_audited(self, client, project):
@@ -83,17 +91,20 @@ class TestCreationFlows:
 class TestTurnStart:
     def test_starts_a_turn_in_the_background(self, client, project):
         from agents.models import Turn
+        from workspaces.models import Conversation
 
+        conversation = Conversation.objects.create(project=project)
         fake_turn = Turn.objects.create(project=project, backend="fake", user_message="tables?")
         with mock.patch("web.views.start_turn", return_value=fake_turn) as st:
             r = client.post(
                 reverse("turn_start", args=[project.pk]),
-                data=json.dumps({"message": "tables?"}),
+                data=json.dumps({"message": "tables?", "conversation_id": conversation.pk}),
                 content_type="application/json",
             )
         assert r.status_code == 200
         assert r.json() == {"turn_id": fake_turn.pk}
         assert st.call_args.args == (project, "tables?")
+        assert st.call_args.kwargs["conversation"] == conversation
 
     def test_rejects_empty_message(self, client, project):
         r = client.post(
@@ -102,6 +113,14 @@ class TestTurnStart:
             content_type="application/json",
         )
         assert r.status_code == 400
+
+    def test_unknown_conversation_404s(self, client, project):
+        r = client.post(
+            reverse("turn_start", args=[project.pk]),
+            data=json.dumps({"message": "hi", "conversation_id": 9999}),
+            content_type="application/json",
+        )
+        assert r.status_code == 404
 
 
 class TestTurnStream:
@@ -274,15 +293,15 @@ class TestConnectionsViews:
     def test_room_shows_connection_select(self, client, project):
         r = client.get(reverse("project_room", args=[project.pk]))
         assert b'name="agent_connection"' in r.content
-        assert b"Manage connections" in r.content
+        assert b"Manage LLM connections" in r.content
 
-    def test_connections_page_masks_keys(self, client, project):
+    def test_settings_page_masks_keys(self, client, project):
         from agents.models import AgentConnection
 
         conn = AgentConnection(name="Sec", backend="openai_compat")
         conn.api_key = "sk-live-abcdefghijklmnop"
         conn.save()
-        r = client.get(reverse("connections"))
+        r = client.get(reverse("settings"))
         assert b"Sec" in r.content
         assert b"abcdefghijklmnop" not in r.content  # full key never rendered
 
@@ -290,8 +309,10 @@ class TestConnectionsViews:
 @pytest.fixture
 def proposed_plan(project):
     from agents.models import Plan, PlanStep, Turn
+    from workspaces.models import Conversation
 
-    turn = Turn.objects.create(project=project, backend="fake", user_message="x")
+    conversation = Conversation.objects.create(project=project)
+    turn = Turn.objects.create(project=project, conversation=conversation, backend="fake", user_message="x")
     plan = Plan.objects.create(project=project, turn=turn, status="proposed")
     PlanStep.objects.create(
         plan=plan, order=1, tool="execute_sql", payload={"sql": "CREATE TABLE t (id INTEGER)"}
@@ -363,3 +384,107 @@ class TestPlanViews:
         other = Project.objects.create(name="Other", server=other_server)
         r = client.get(reverse("plan_json", args=[other.pk, proposed_plan.pk]))
         assert r.status_code == 404
+
+
+class TestConversationsViews:
+    def test_room_creates_a_conversation_when_none_exists(self, client, project):
+        from workspaces.models import Conversation
+
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert r.status_code == 200
+        assert Conversation.objects.filter(project=project).count() == 1
+        conversation = Conversation.objects.get()
+        assert f"conversationId: {conversation.pk}".encode() in r.content
+
+    def test_room_selects_the_requested_chat(self, client, project):
+        from workspaces.models import ChatMessage, Conversation
+
+        a = Conversation.objects.create(project=project, title="Thread A")
+        b = Conversation.objects.create(project=project, title="Thread B")
+        ChatMessage.objects.create(project=project, conversation=b, role="user", content="only in B")
+        r = client.get(reverse("project_room", args=[project.pk]) + f"?chat={b.pk}")
+        assert b"only in B" in r.content
+        assert f"conversationId: {b.pk}".encode() in r.content
+        r2 = client.get(reverse("project_room", args=[project.pk]) + f"?chat={a.pk}")
+        assert b"only in B" not in r2.content
+
+    def test_chat_of_another_project_404s(self, client, project, tmp_path):
+        from workspaces.models import Conversation
+
+        other_server = Server.objects.create(name="S2", adapter_type="sqlite", dsn=str(tmp_path / "o.db"))
+        other = Project.objects.create(name="Other", server=other_server)
+        foreign = Conversation.objects.create(project=other)
+        r = client.get(reverse("project_room", args=[project.pk]) + f"?chat={foreign.pk}")
+        assert r.status_code == 404
+
+    def test_create_and_delete_are_audited(self, client, project):
+        from workspaces.models import ChatMessage, Conversation
+
+        r = client.post(reverse("chat_create", args=[project.pk]))
+        assert r.status_code == 302
+        conversation = Conversation.objects.get()
+        assert AuditEntry.objects.filter(action="chat.created").exists()
+
+        ChatMessage.objects.create(project=project, conversation=conversation, role="user", content="x")
+        r = client.post(reverse("chat_delete", args=[project.pk, conversation.pk]))
+        assert r.status_code == 302
+        assert not Conversation.objects.exists()
+        assert not ChatMessage.objects.exists()  # cascade
+        assert AuditEntry.objects.filter(action="chat.deleted").exists()
+
+    def test_deleting_a_chat_keeps_the_audit_trail(self, client, project):
+        from audit.services import record
+        from workspaces.models import Conversation
+
+        conversation = Conversation.objects.create(project=project)
+        record(action="execute_sql", actor_type="agent", project=project, payload_in={"sql": "SELECT 1"})
+        client.post(reverse("chat_delete", args=[project.pk, conversation.pk]))
+        assert AuditEntry.objects.filter(action="execute_sql").exists()
+
+    def test_sidebar_lists_chats(self, client, project):
+        from workspaces.models import Conversation
+
+        Conversation.objects.create(project=project, title="RLS policies")
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert b"RLS policies" in r.content
+        assert b'id="sidebar"' in r.content
+
+
+class TestGlobalShell:
+    def test_every_page_carries_the_sidebar_nav(self, client, project):
+        for name in ("home", "connections", "settings"):
+            r = client.get(reverse(name))
+            assert r.status_code == 200
+            assert b'id="sidebar"' in r.content
+            for target in ("home", "connections", "settings"):
+                assert f'href="{reverse(target)}"'.encode() in r.content, name
+
+    def test_connections_page_lists_servers(self, client, project):
+        r = client.get(reverse("connections"))
+        assert b"Local" in r.content  # the project fixture's server
+        assert b'name="adapter_type"' in r.content
+
+    def test_settings_page_hosts_llm_connections(self, client, project):
+        r = client.get(reverse("settings"))
+        assert b"LLM connections" in r.content
+        assert b'name="backend"' in r.content
+
+    def test_project_delete_cascades_and_audits(self, client, project):
+        from workspaces.models import Conversation
+
+        Conversation.objects.create(project=project, title="thread")
+        r = client.post(reverse("project_delete", args=[project.pk]))
+        assert r.status_code == 302
+        assert not Project.objects.exists()
+        assert not Conversation.objects.exists()
+        entry = AuditEntry.objects.get(action="project.deleted")
+        assert entry.project is None  # FK nulled by the delete
+        assert entry.project_name == "Room"  # the denormalized name survives
+
+    def test_server_delete_cascades_projects_and_audits(self, client, project):
+        r = client.post(reverse("server_delete", args=[project.server.pk]))
+        assert r.status_code == 302 and r.url == reverse("connections")
+        assert not Server.objects.exists()
+        assert not Project.objects.exists()
+        entry = AuditEntry.objects.get(action="server.deleted")
+        assert entry.payload_in["projects"] == ["Room"]

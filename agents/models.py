@@ -57,6 +57,10 @@ class Turn(models.Model):
     STATUSES = [("running", "Running"), ("completed", "Completed"), ("failed", "Failed")]
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="turns")
+    # deleting a chat deletes its turns (and their plans); audit rows survive
+    conversation = models.ForeignKey(
+        "workspaces.Conversation", null=True, on_delete=models.CASCADE, related_name="turns"
+    )
     backend = models.CharField(max_length=30)
     model = models.CharField(max_length=100, blank=True)
     status = models.CharField(max_length=10, choices=STATUSES, default="running")
