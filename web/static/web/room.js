@@ -93,12 +93,18 @@
   }
 
   /* ---------- chat ---------- */
+  /* Stick-to-bottom, not force-to-bottom: autoscroll only follows new
+     content while the user is already at (or near) the end — scrolling
+     up to reread must never be yanked back down by a stream update. */
+  const nearBottom = () => log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+  const followIf = (stick) => { if (stick) log.scrollTop = log.scrollHeight; };
   const add = (cls, html, textOnly) => {
+    const stick = nearBottom();
     const d = document.createElement("div");
     d.className = cls;
     if (textOnly) d.textContent = html; else d.innerHTML = html;
     log.appendChild(d);
-    log.scrollTop = log.scrollHeight;
+    followIf(stick);
     return d;
   };
   const csrf = () => DIABASE.csrfToken || form.querySelector("[name=csrfmiddlewaretoken]").value;
@@ -114,12 +120,14 @@
 
     function handleEvent(ev) {
       switch (ev.event) {
-        case "TextDelta":
+        case "TextDelta": {
+          const stick = nearBottom();
           assistantText += ev.text;
           if (!assistantEl) assistantEl = add("msg assistant", "");
           assistantEl.innerHTML = md(assistantText);
-          log.scrollTop = log.scrollHeight;
+          followIf(stick);
           break;
+        }
         case "ToolCallStarted": {
           const risky = ev.tool === "execute_sql";
           pulse(risky ? "write" : "tool", ev.tool + "…");
@@ -130,6 +138,7 @@
           pulse("write", "planning…");
           add("chip", `⊕ ${esc(ev.tool)} → step ${ev.step} <span class="risk pill warn">planned</span>`);
           setOrb("thinking", "planning…");
+          refreshTimelineSoon();
           break;
         case "PlanProposed":
           loadPlanCard(ev.plan_id);
@@ -137,9 +146,11 @@
         case "ToolCallDenied":
           add("chip denied", `⛔ ${esc(ev.tool)} — ${esc(ev.reason)}`);
           pulse("error", "blocked by policy");
+          refreshTimelineSoon();
           break;
         case "ToolCallFinished":
           setOrb("thinking", "thinking…");
+          refreshTimelineSoon();
           break;
         case "TurnCompleted":
           setOrb("idle", "");
@@ -227,6 +238,7 @@
   }
 
   function renderPlanCard(plan) {
+    const stick = nearBottom();
     const el = planCardEl(plan.id);
     el.dataset.status = plan.status;
     const steps = plan.steps
@@ -257,7 +269,7 @@
         <textarea rows="2" placeholder="What should change?"></textarea>
         <button>Send revision</button>
       </form>` : ""}`;
-    log.scrollTop = log.scrollHeight;
+    followIf(stick);
     if (decidable) wirePlanActions(el, plan.id);
     return el;
   }
@@ -316,6 +328,7 @@
       let plan;
       try { plan = await planFetch(planId, ""); } catch { continue; }
       renderPlanCard(plan);
+      refreshTimelineSoon(); // each applied step is already in the trail
       if (plan.status === "applying") continue;
       refreshTimeline();
       refreshSchemaIfOpen();
@@ -356,6 +369,14 @@
   async function refreshTimeline() {
     const r = await fetch(DIABASE.auditUrl);
     if (r.ok) document.getElementById("timeline").innerHTML = await r.text();
+  }
+  /* the sidebar timeline follows the turn LIVE: every tool event lands in
+     the trail the moment it runs, so refresh as they stream in — debounced,
+     one fetch per burst instead of one per event */
+  let timelineTimer = null;
+  function refreshTimelineSoon() {
+    clearTimeout(timelineTimer);
+    timelineTimer = setTimeout(refreshTimeline, 500);
   }
 
   /* ---------- schema overlay: auto-layered dependency graph on a pan/zoom canvas ---------- */

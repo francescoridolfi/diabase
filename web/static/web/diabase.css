@@ -188,7 +188,9 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
    filled with a conic gradient whose ANGLE rotates — colored segments
    separated by transparent gaps, so the glow visibly travels around the
    card; the blurred twin underneath is the halo */
-.schema-overlay { --ospin: 5s; }
+/* idle: a slow, ambient orbit — the glow only hurries when the agent is
+   actually thinking/writing/planning (.working) */
+.schema-overlay { --ospin: 14s; }
 .schema-overlay.working { --ospin: 1.4s; }
 .schema-overlay::before, .schema-overlay::after {
   content: ""; position: absolute; inset: -3px;
