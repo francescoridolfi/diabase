@@ -453,3 +453,62 @@ class TestSupabaseStorage:
         with mock.patch.object(a, "_query", side_effect=fk):
             with pytest.raises(AdapterError, match="not empty"):
                 a.delete_bucket("avatars")
+
+
+class TestSupabaseAuthConfig:
+    """Auth config (capability "auth_config"): secrets are masked AT THE
+    SOURCE — no consumer (model, audit, GUI) ever sees a credential, and
+    none can be written through Diabase."""
+
+    def _adapter(self, monkeypatch):
+        monkeypatch.setenv("SUPABASE_ACCESS_TOKEN", "sbp_test")
+        return SupabaseCloudAdapter(VALID_REF)
+
+    def test_capability_declared_only_on_supabase(self):
+        from instances.adapters import PostgresAdapter
+
+        assert "auth_config" in SupabaseCloudAdapter.capabilities
+        assert "auth_config" not in SQLiteAdapter.capabilities
+        assert "auth_config" not in PostgresAdapter.capabilities
+
+    def test_get_auth_config_redacts_set_secrets_and_keeps_unset_ones(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        live = {  # nosec — fake credentials exercising the redaction
+            "site_url": "https://cucina.it",
+            "smtp_pass": "hunter2",  # nosec B105
+            "external_github_secret": "gh_secret",  # nosec B105
+            "external_google_secret": "",  # nosec B105 — unset stays visibly unset
+            "sms_twilio_auth_token": "tok",  # nosec B105
+            "password_min_length": 8,
+        }
+        with mock.patch.object(a, "_api", return_value=live) as api:
+            out = a.get_auth_config()
+        assert api.call_args.args == ("GET", "/config/auth")
+        assert out["site_url"] == "https://cucina.it" and out["password_min_length"] == 8
+        from instances.adapters import AUTH_SECRET_MASK
+
+        assert out["smtp_pass"] == AUTH_SECRET_MASK
+        assert out["external_github_secret"] == AUTH_SECRET_MASK
+        assert out["sms_twilio_auth_token"] == AUTH_SECRET_MASK
+        assert out["external_google_secret"] == ""
+
+    def test_update_patches_only_the_passed_keys(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with mock.patch.object(a, "_api", return_value={}) as api:
+            out = a.update_auth_config({"disable_signup": True, "site_url": "https://x"})
+        method, path = api.call_args.args[:2]
+        assert (method, path) == ("PATCH", "/config/auth")
+        assert api.call_args.args[2] == {"disable_signup": True, "site_url": "https://x"}
+        assert out == {"updated": ["disable_signup", "site_url"]}
+
+    def test_update_refuses_secret_keys(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with mock.patch.object(a, "_api") as api:
+            with pytest.raises(AdapterError, match="secret keys"):
+                a.update_auth_config({"smtp_pass": "new", "site_url": "https://x"})  # nosec B105
+        api.assert_not_called()  # nothing reached the API
+
+    def test_update_requires_changes(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with pytest.raises(AdapterError, match="non-empty"):
+            a.update_auth_config({})

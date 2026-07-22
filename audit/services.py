@@ -158,6 +158,20 @@ class AuditedAdapter:
     def delete_bucket(self, name: str):
         return self._call("delete_bucket", {"name": name}, lambda: self._adapter.delete_bucket(name))
 
+    def get_auth_config(self):
+        return self._call("get_auth_config", {}, self._adapter.get_auth_config)
+
+    def update_auth_config(self, changes: dict):
+        # defense in depth: the adapter refuses secret writes, but even the
+        # attempt must not land in the trail with a readable value
+        from instances.adapters import redact_auth_config
+
+        return self._call(
+            "update_auth_config",
+            {"changes": redact_auth_config(changes) if isinstance(changes, dict) else changes},
+            lambda: self._adapter.update_auth_config(changes),
+        )
+
     def get_schema(self):
         # composed of audited calls: each underlying list/describe is recorded
         return {t: self.describe_table(t) for t in self.list_tables()}

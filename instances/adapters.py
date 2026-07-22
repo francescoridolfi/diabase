@@ -85,6 +85,24 @@ def _check_mime(mime: str) -> str:
     return mime
 
 
+# Auth config keys whose values are credentials (SMTP password, OAuth
+# secrets, SMS provider keys, hook secrets...). Their values never leave
+# the adapter: not to the model, not to the audit trail, not to the GUI —
+# the same discipline as connection API keys.
+AUTH_SECRET_SUFFIXES = ("_secret", "_secrets", "_pass", "_api_key", "_access_key", "_auth_token")
+
+AUTH_SECRET_MASK = "***set***"  # noqa: S105 # nosec B105 — a mask, not a password
+
+
+def is_auth_secret(key: str) -> bool:
+    return key.endswith(AUTH_SECRET_SUFFIXES)
+
+
+def redact_auth_config(config: dict) -> dict:
+    """Secret values become a set/unset marker; everything else passes."""
+    return {k: (AUTH_SECRET_MASK if v else v) if is_auth_secret(k) else v for k, v in config.items()}
+
+
 def _single_statement(sql: str) -> str:
     """The read-only guards below wrap or configure a transaction around
     the statement; a second statement smuggled in with ';' could escape
@@ -285,7 +303,7 @@ class SupabaseCloudAdapter(BaseAdapter):
 
     MAX_429_RETRIES = 2
 
-    capabilities = frozenset({"functions", "storage"})
+    capabilities = frozenset({"functions", "storage", "auth_config"})
 
     def _api(
         self,
@@ -415,6 +433,29 @@ class SupabaseCloudAdapter(BaseAdapter):
         _check_slug(slug)
         self._api("DELETE", f"/functions/{slug}")
         return {"slug": slug, "deleted": True}
+
+    # ---------- auth configuration (capability "auth_config") ----------
+
+    def get_auth_config(self):
+        """The project's GoTrue configuration, redacted AT THE SOURCE:
+        secret values are masked before anything downstream (model, audit,
+        GUI) can see them."""
+        return redact_auth_config(self._api("GET", "/config/auth") or {})
+
+    def update_auth_config(self, changes: dict):
+        """PATCH only the passed keys. Secrets cannot transit Diabase —
+        by the redaction contract the agent only ever sees masks, so a
+        write attempt is either a guess or an echo of the mask: refused."""
+        if not isinstance(changes, dict) or not changes:
+            raise AdapterError("update_auth_config needs a non-empty dict of changes")
+        secrets = sorted(k for k in changes if is_auth_secret(k))
+        if secrets:
+            raise AdapterError(
+                f"Refusing to set secret keys through Diabase: {', '.join(secrets)} "
+                "— secrets are entered in the Supabase dashboard, never through the agent"
+            )
+        self._api("PATCH", "/config/auth", changes)
+        return {"updated": sorted(changes)}
 
     # ---------- storage buckets (capability "storage") ----------
     # The Management API only READS buckets (GET /storage/buckets); the

@@ -686,6 +686,31 @@ class TestFunctionsViews:
         r = client.get(reverse("project_room", args=[project.pk]))
         assert b"pane-storage" in r.content
 
+    def test_auth_config_json_serves_the_redacted_config(self, client, project):
+        with mock.patch("web.views.get_adapter") as ga:
+            # the adapter redacts at the source; the view passes it through
+            ga.return_value.get_auth_config.return_value = {"site_url": "https://x", "smtp_pass": "***set***"}  # noqa: S105 # nosec B105
+            r = client.get(reverse("auth_config_json", args=[project.pk]))
+        assert r.status_code == 200
+        assert r.json()["config"] == {"site_url": "https://x", "smtp_pass": "***set***"}  # noqa: S105 # nosec B105
+
+    def test_auth_config_json_adapter_errors_become_502(self, client, project):
+        from instances.adapters import AdapterError
+
+        with mock.patch("web.views.get_adapter") as ga:
+            ga.return_value.get_auth_config.side_effect = AdapterError("nope")
+            r = client.get(reverse("auth_config_json", args=[project.pk]))
+        assert r.status_code == 502 and r.json()["error"] == "nope"
+
+    def test_auth_tab_only_for_capable_servers(self, client, project):
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert b"pane-auth" not in r.content  # sqlite project
+        project.server.adapter_type = "supabase"
+        project.server.save()
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert b"pane-auth" in r.content
+        assert b'id="tpl-preview"' in r.content
+
     def test_plan_json_carries_step_meta(self, client, project, proposed_plan):
         step = proposed_plan.steps.get()
         step.meta = {"updates_existing": True, "diff": "-a\n+b"}

@@ -53,6 +53,7 @@
       <button class="mt" data-view="pane-schema">Schema</button>
       {% if "functions" in server_caps %}<button class="mt" data-view="pane-functions">Fn</button>{% endif %}
       {% if "storage" in server_caps %}<button class="mt" data-view="pane-storage">Storage</button>{% endif %}
+      {% if "auth_config" in server_caps %}<button class="mt" data-view="pane-auth">Auth</button>{% endif %}
       <button class="mt" data-view="pane-audit">Audit</button>
       <button class="mt" data-view="pane-context">Context</button>
       <button class="mt" data-view="pane-settings">Settings</button>
@@ -74,6 +75,7 @@
       <button class="tab active" role="tab" data-pane="pane-schema">Schema</button>
       {% if "functions" in server_caps %}<button class="tab" role="tab" data-pane="pane-functions">Functions</button>{% endif %}
       {% if "storage" in server_caps %}<button class="tab" role="tab" data-pane="pane-storage">Storage</button>{% endif %}
+      {% if "auth_config" in server_caps %}<button class="tab" role="tab" data-pane="pane-auth">Auth</button>{% endif %}
       <button class="tab" role="tab" data-pane="pane-audit">Audit</button>
       <button class="tab" role="tab" data-pane="pane-context">Context</button>
       <button class="tab" role="tab" data-pane="pane-settings">Settings</button>
@@ -104,6 +106,12 @@
     <div class="pane" id="pane-storage" role="tabpanel" hidden>
       <h2 class="pane-label">Buckets <span class="dim-note">— structure and access rules; files live in the Supabase dashboard</span></h2>
       <div id="bucket-list"><p class="dim-note">Loading…</p></div>
+    </div>
+    {% endif %}
+
+    {% if "auth_config" in server_caps %}
+    <div class="pane" id="pane-auth" role="tabpanel" hidden>
+      <div id="auth-view"><p class="dim-note">Loading…</p></div>
     </div>
     {% endif %}
 
@@ -202,6 +210,22 @@
 </div>
 {% endif %}
 
+{% if "auth_config" in server_caps %}
+<div class="modal-overlay" id="tpl-preview" role="dialog" aria-modal="true" aria-label="Email template preview">
+  <div class="panel-header">
+    <div style="display:flex; align-items:baseline; gap:0.8rem; min-width:0">
+      <h2 style="margin:0" id="tpl-preview-title">template</h2>
+      <span class="editor-meta" id="tpl-preview-subject"></span>
+    </div>
+    <div class="hdr-actions">
+      <a class="btn-link" id="tpl-preview-open" href="#" target="_blank" rel="noopener">Open in Supabase ↗</a>
+      <button class="icon-btn" data-close title="Close (Esc)" aria-label="Close">✕</button>
+    </div>
+  </div>
+  <iframe class="tpl-frame" id="tpl-preview-frame" sandbox="" title="Email template preview"></iframe>
+</div>
+{% endif %}
+
 <div class="modal-overlay" id="editor-overlay" role="dialog" aria-modal="true" aria-label="Context editor">
   <div class="panel-header">
     <div style="display:flex; align-items:baseline; gap:0.8rem; min-width:0">
@@ -236,6 +260,7 @@
     serverCaps: {{ server_caps|default:"[]"|safe }},
     functionsUrl: "{% url 'functions_json' project.pk %}",
     storageUrl: "{% url 'storage_json' project.pk %}",
+    authConfigUrl: "{% url 'auth_config_json' project.pk %}",
     monacoBase: "{% static 'web/vendor/monaco/vs' %}",
     {% if project.server.adapter_type == "supabase" %}supabaseDashboard: "https://supabase.com/dashboard/project/{{ project.server.dsn }}",{% endif %}
     auditUrl: "{% url 'audit_partial' project.pk %}",
