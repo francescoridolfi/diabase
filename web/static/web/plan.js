@@ -15,7 +15,7 @@ const PLAN_LABELS = {
   superseded: "superseded",
 };
 
-export function initPlan({ log, chat, orb, timeline, urls, csrf }) {
+export function initPlan({ log, chat, orb, timeline, urls, csrf, onApplySettled }) {
   function planCardEl(planId) {
     let el = document.getElementById("plan-" + planId);
     if (!el) {
@@ -145,6 +145,9 @@ export function initPlan({ log, chat, orb, timeline, urls, csrf }) {
       timeline.refreshSoon(); // each applied step is already in the trail
       if (plan.status === "applying") continue;
       timeline.refresh();
+      // applied steps changed the instance: schema/functions panes refresh
+      // NOW, not only when the continuation turn eventually finishes
+      onApplySettled?.();
       if (plan.continuation_turn_id) chat.streamTurn(plan.continuation_turn_id, 0);
       else orb.set("idle", "");
       return;

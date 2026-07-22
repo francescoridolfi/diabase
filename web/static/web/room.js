@@ -66,14 +66,26 @@ const chat = initChat({
     onToolEvent: () => timeline.refreshSoon(),
     onTurnSettled: () => {
       timeline.refresh();
-      schema.refreshIfVisible(workspace.paneVisible("pane-schema"));
-      functions?.refreshIfVisible(workspace.paneVisible("pane-functions"));
+      refreshPanes();
     },
     onPlanProposed: (planId) => plan.loadPlanCard(planId),
   },
 });
 
-const plan = initPlan({ log: document.getElementById("chatlog"), chat, orb, timeline, urls, csrf });
+const refreshPanes = () => {
+  schema.refreshIfVisible(workspace.paneVisible("pane-schema"));
+  functions?.refreshIfVisible(workspace.paneVisible("pane-functions"));
+};
+
+const plan = initPlan({
+  log: document.getElementById("chatlog"),
+  chat,
+  orb,
+  timeline,
+  urls,
+  csrf,
+  onApplySettled: refreshPanes,
+});
 
 initContext({ chat, urls, csrf });
 // the sidebar drawer is handled globally by shell.js
