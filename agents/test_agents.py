@@ -898,7 +898,7 @@ class TestAuthConfigTools:
                 self.config = {
                     "site_url": "https://old.example",
                     "disable_signup": False,
-                    "smtp_pass": "***set***",  # noqa: S105 — already-masked value, as the real adapter serves it
+                    "smtp_pass": "***set***",  # noqa: S105 # nosec B105 — already masked
                     "mailer_templates_confirmation_content": "<h1>Hello</h1>\n<p>old body</p>",
                 }
                 self.patched = None
@@ -958,7 +958,7 @@ class TestAuthConfigTools:
         from agents.models import PlanStep
 
         toolset = self._auth_toolset(project, turn=make_turn(project))
-        out = toolset.execute("update_auth_config", {"changes": {"smtp_pass": "hunter2"}})
+        out = toolset.execute("update_auth_config", {"changes": {"smtp_pass": "hunter2"}})  # nosec B105
         assert "secret keys" in out["error"] and "smtp_pass" in out["error"]
         assert PlanStep.objects.count() == 0  # the value never landed anywhere
 

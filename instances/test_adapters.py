@@ -473,12 +473,12 @@ class TestSupabaseAuthConfig:
 
     def test_get_auth_config_redacts_set_secrets_and_keeps_unset_ones(self, monkeypatch):
         a = self._adapter(monkeypatch)
-        live = {
+        live = {  # nosec — fake credentials exercising the redaction
             "site_url": "https://cucina.it",
-            "smtp_pass": "hunter2",
-            "external_github_secret": "gh_secret",
-            "external_google_secret": "",  # unset stays visibly unset
-            "sms_twilio_auth_token": "tok",
+            "smtp_pass": "hunter2",  # nosec B105
+            "external_github_secret": "gh_secret",  # nosec B105
+            "external_google_secret": "",  # nosec B105 — unset stays visibly unset
+            "sms_twilio_auth_token": "tok",  # nosec B105
             "password_min_length": 8,
         }
         with mock.patch.object(a, "_api", return_value=live) as api:
@@ -505,7 +505,7 @@ class TestSupabaseAuthConfig:
         a = self._adapter(monkeypatch)
         with mock.patch.object(a, "_api") as api:
             with pytest.raises(AdapterError, match="secret keys"):
-                a.update_auth_config({"smtp_pass": "new", "site_url": "https://x"})
+                a.update_auth_config({"smtp_pass": "new", "site_url": "https://x"})  # nosec B105
         api.assert_not_called()  # nothing reached the API
 
     def test_update_requires_changes(self, monkeypatch):

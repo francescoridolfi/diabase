@@ -101,7 +101,7 @@ class TestAuditedAdapter:
 
         audited = AuditedAdapter(FakeAdapter(), project=project, actor="claude-test")
         with pytest.raises(AdapterError):
-            audited.update_auth_config({"smtp_pass": "hunter2", "site_url": "https://x"})
+            audited.update_auth_config({"smtp_pass": "hunter2", "site_url": "https://x"})  # nosec B105
         entry = AuditEntry.objects.get(action="update_auth_config")
         assert entry.outcome == "error"
         assert entry.payload_in == {"changes": {"smtp_pass": "***set***", "site_url": "https://x"}}  # noqa: S105 # nosec B105

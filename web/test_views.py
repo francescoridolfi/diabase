@@ -689,10 +689,10 @@ class TestFunctionsViews:
     def test_auth_config_json_serves_the_redacted_config(self, client, project):
         with mock.patch("web.views.get_adapter") as ga:
             # the adapter redacts at the source; the view passes it through
-            ga.return_value.get_auth_config.return_value = {"site_url": "https://x", "smtp_pass": "***set***"}  # noqa: S105
+            ga.return_value.get_auth_config.return_value = {"site_url": "https://x", "smtp_pass": "***set***"}  # noqa: S105 # nosec B105
             r = client.get(reverse("auth_config_json", args=[project.pk]))
         assert r.status_code == 200
-        assert r.json()["config"] == {"site_url": "https://x", "smtp_pass": "***set***"}  # noqa: S105
+        assert r.json()["config"] == {"site_url": "https://x", "smtp_pass": "***set***"}  # noqa: S105 # nosec B105
 
     def test_auth_config_json_adapter_errors_become_502(self, client, project):
         from instances.adapters import AdapterError
