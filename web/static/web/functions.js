@@ -69,12 +69,12 @@ export function initFunctions({ listEl, urls }) {
     }
   }
 
-  /* first open loads; a finished turn refreshes if the pane is visible */
+  /* every open reloads (the list is one cheap call and deploys happen
+     behind your back by design); a finished turn or an applied plan
+     refreshes in place while the pane is visible */
   function shown() {
-    if (!loaded) {
-      loaded = true;
-      load();
-    }
+    loaded = true;
+    load();
   }
   function refreshIfVisible(visible) {
     if (loaded && visible) load();
