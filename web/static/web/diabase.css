@@ -282,7 +282,7 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
 .row-link:hover .fname { color: var(--aura-3); }
 
 .chatcol { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.chat-head { display: flex; align-items: center; gap: 0.8rem; padding: 0.55rem 0.2rem 0.6rem; }
+.chat-head { display: flex; align-items: center; gap: 0.8rem; padding: 0.55rem 0.2rem 0.6rem; flex: 0 0 auto; }
 .chat-title { min-width: 0; }
 .chat-title h1 { margin: 0; font-size: 1.05rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-title .sub { font-size: 0.7rem; color: var(--dim); font-family: var(--mono); }
@@ -640,6 +640,10 @@ body.overlay-open .overlay-veil { opacity: 1; pointer-events: auto; }
   /* the strip decides what's on screen: chat, or the workspace panel */
   .workspace { display: none; margin: 0.5rem 0 0; }
   .room-shell[data-m-view="workspace"] .workspace { display: flex; flex: 1 1 auto; opacity: 1; pointer-events: auto; }
+  /* in workspace view the chat column is just the header + strip: it must
+     never be squashed by a content-heavy pane (the pane scrolls instead) */
+  .chatcol { flex: 1 1 auto; }
+  .room-shell[data-m-view="workspace"] .chatcol { flex: 0 0 auto; }
   .room-shell[data-m-view="workspace"] #chatlog,
   .room-shell[data-m-view="workspace"] .chatbox,
   .room-shell[data-m-view="workspace"] .chat-hint { display: none; }
