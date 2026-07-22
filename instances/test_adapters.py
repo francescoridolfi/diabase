@@ -359,3 +359,97 @@ class TestSupabaseFunctions:
             out = a.delete_function("hello")
         assert api.call_args.args == ("DELETE", "/functions/hello")
         assert out == {"slug": "hello", "deleted": True}
+
+
+class TestSupabaseStorage:
+    """Buckets (capability "storage"): the Management API only lists them;
+    mutations are SQL on storage.buckets — the engine (FK from
+    storage.objects) is what refuses deleting a non-empty bucket."""
+
+    def _adapter(self, monkeypatch):
+        monkeypatch.setenv("SUPABASE_ACCESS_TOKEN", "sbp_test")
+        return SupabaseCloudAdapter(VALID_REF)
+
+    def test_capability_declared_only_on_supabase(self):
+        from instances.adapters import PostgresAdapter
+
+        assert "storage" in SupabaseCloudAdapter.capabilities
+        assert "storage" not in SQLiteAdapter.capabilities
+        assert "storage" not in PostgresAdapter.capabilities
+
+    def test_list_buckets_normalizes_rows(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        rows = [
+            {
+                "id": "avatars",
+                "name": "avatars",
+                "public": True,
+                "owner": "x",
+                "created_at": "c",
+                "updated_at": "u",
+            }
+        ]
+        with mock.patch.object(a, "_api", return_value=rows) as api:
+            out = a.list_buckets()
+        assert api.call_args.args == ("GET", "/storage/buckets")
+        assert out == [
+            {"id": "avatars", "name": "avatars", "public": True, "created_at": "c", "updated_at": "u"}
+        ]
+
+    def test_create_bucket_inserts_with_options(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with mock.patch.object(a, "_query", return_value=[]) as q:
+            out = a.create_bucket(
+                "avatars", public=True, file_size_limit=1048576, allowed_mime_types=["image/png", "image/*"]
+            )
+        sql = q.call_args.args[0]
+        assert "insert into storage.buckets" in sql
+        assert "'avatars', 'avatars', true, 1048576, ARRAY['image/png', 'image/*']" in sql
+        assert out == {"name": "avatars", "public": True, "created": True}
+
+    def test_create_bucket_defaults_private_no_limits(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with mock.patch.object(a, "_query", return_value=[]) as q:
+            a.create_bucket("docs")
+        assert "'docs', 'docs', false, NULL, NULL" in q.call_args.args[0]
+
+    def test_bucket_name_validation_guards_sql(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with pytest.raises(AdapterError, match="Invalid bucket name"):
+            a.create_bucket("x'; drop table storage.buckets; --")
+        with pytest.raises(AdapterError, match="Invalid MIME type"):
+            a.create_bucket("ok", allowed_mime_types=["image/png'); --"])
+
+    def test_update_bucket_patches_only_what_was_passed(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with mock.patch.object(a, "_query", return_value=[]) as q:
+            out = a.update_bucket("avatars", public=False)
+        sql = q.call_args.args[0]
+        assert sql == "update storage.buckets set public = false where id = 'avatars'"
+        assert out == {"name": "avatars", "updated": ["public"]}
+
+    def test_update_bucket_clears_limits_with_zero_and_empty(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with mock.patch.object(a, "_query", return_value=[]) as q:
+            a.update_bucket("avatars", file_size_limit=0, allowed_mime_types=[])
+        sql = q.call_args.args[0]
+        assert "file_size_limit = NULL" in sql and "allowed_mime_types = NULL" in sql
+
+    def test_update_bucket_requires_a_change(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with pytest.raises(AdapterError, match="Nothing to update"):
+            a.update_bucket("avatars")
+
+    def test_delete_bucket(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with mock.patch.object(a, "_query", return_value=[]) as q:
+            out = a.delete_bucket("avatars")
+        assert q.call_args.args[0] == "delete from storage.buckets where id = 'avatars'"
+        assert out == {"name": "avatars", "deleted": True}
+
+    def test_delete_non_empty_bucket_gets_a_readable_error(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        fk = AdapterError('Supabase API 400: violates foreign key constraint "objects_bucketId_fkey"')
+        with mock.patch.object(a, "_query", side_effect=fk):
+            with pytest.raises(AdapterError, match="not empty"):
+                a.delete_bucket("avatars")

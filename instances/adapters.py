@@ -66,6 +66,25 @@ def _check_slug(slug: str):
         raise AdapterError(f"Invalid function slug: {slug!r}")
 
 
+_BUCKET_RE = re.compile(r"^[A-Za-z0-9._-]{1,100}$")
+
+
+def _check_bucket(name: str):
+    """Bucket ids end up inside SQL literals: the whitelist doubles as
+    the SQL-injection guard (no quotes, no whitespace)."""
+    if not _BUCKET_RE.match(name or ""):
+        raise AdapterError(f"Invalid bucket name: {name!r}")
+
+
+_MIME_RE = re.compile(r"^[A-Za-z0-9.+-]+/[A-Za-z0-9.+*-]+$")
+
+
+def _check_mime(mime: str) -> str:
+    if not _MIME_RE.match(mime or ""):
+        raise AdapterError(f"Invalid MIME type: {mime!r}")
+    return mime
+
+
 def _single_statement(sql: str) -> str:
     """The read-only guards below wrap or configure a transaction around
     the statement; a second statement smuggled in with ';' could escape
@@ -266,7 +285,7 @@ class SupabaseCloudAdapter(BaseAdapter):
 
     MAX_429_RETRIES = 2
 
-    capabilities = frozenset({"functions"})
+    capabilities = frozenset({"functions", "storage"})
 
     def _api(
         self,
@@ -396,6 +415,77 @@ class SupabaseCloudAdapter(BaseAdapter):
         _check_slug(slug)
         self._api("DELETE", f"/functions/{slug}")
         return {"slug": slug, "deleted": True}
+
+    # ---------- storage buckets (capability "storage") ----------
+    # The Management API only READS buckets (GET /storage/buckets); the
+    # mutations are plain SQL on storage.buckets — the documented Supabase
+    # pattern (storage-api serves whatever that table says). Deleting a
+    # non-empty bucket fails on storage.objects' FK: the ENGINE rejects
+    # it, we only translate the error.
+
+    def list_buckets(self):
+        rows = self._api("GET", "/storage/buckets") or []
+        return [
+            {
+                "id": b.get("id"),
+                "name": b.get("name"),
+                "public": bool(b.get("public")),
+                "created_at": b.get("created_at"),
+                "updated_at": b.get("updated_at"),
+            }
+            for b in rows
+        ]
+
+    @staticmethod
+    def _bucket_sql_values(file_size_limit, allowed_mime_types):
+        """The two optional bucket attributes as SQL literals (validated:
+        int and whitelisted MIME strings — nothing quotable gets through)."""
+        limit = "NULL" if not file_size_limit else str(int(file_size_limit))
+        if allowed_mime_types:
+            types = ", ".join(f"'{_check_mime(str(t))}'" for t in allowed_mime_types)
+            mimes = f"ARRAY[{types}]"
+        else:
+            mimes = "NULL"
+        return limit, mimes
+
+    def create_bucket(self, name: str, *, public=False, file_size_limit=None, allowed_mime_types=None):
+        _check_bucket(name)
+        limit, mimes = self._bucket_sql_values(file_size_limit, allowed_mime_types)
+        self._query(
+            "insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types) "  # noqa: S608 # nosec B608 — every value validated above
+            f"values ('{name}', '{name}', {'true' if public else 'false'}, {limit}, {mimes})"
+        )
+        return {"name": name, "public": bool(public), "created": True}
+
+    def update_bucket(self, name: str, *, public=None, file_size_limit=None, allowed_mime_types=None):
+        """Patch only what was passed; file_size_limit=0 and
+        allowed_mime_types=[] clear their restriction."""
+        _check_bucket(name)
+        sets = []
+        if public is not None:
+            sets.append(f"public = {'true' if public else 'false'}")
+        if file_size_limit is not None:
+            sets.append(f"file_size_limit = {'NULL' if not file_size_limit else int(file_size_limit)}")
+        if allowed_mime_types is not None:
+            _, mimes = self._bucket_sql_values(None, allowed_mime_types)
+            sets.append(f"allowed_mime_types = {mimes}")
+        if not sets:
+            raise AdapterError("Nothing to update: pass public, file_size_limit or allowed_mime_types")
+        self._query(f"update storage.buckets set {', '.join(sets)} where id = '{name}'")  # noqa: S608 # nosec B608 — validated above
+        return {"name": name, "updated": sorted(s.split(" = ")[0] for s in sets)}
+
+    def delete_bucket(self, name: str):
+        _check_bucket(name)
+        try:
+            self._query(f"delete from storage.buckets where id = '{name}'")  # noqa: S608 # nosec B608 — validated above
+        except AdapterError as e:
+            if "foreign key" in str(e).lower() or "objects_bucketid_fkey" in str(e).lower():
+                raise AdapterError(
+                    f"Bucket {name!r} is not empty: its objects must be deleted first "
+                    "(from the Supabase dashboard — Diabase does not touch files)"
+                ) from None
+            raise
+        return {"name": name, "deleted": True}
 
     def list_tables(self):
         rows = self._query(

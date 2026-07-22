@@ -124,6 +124,40 @@ class AuditedAdapter:
     def delete_function(self, slug: str):
         return self._call("delete_function", {"slug": slug}, lambda: self._adapter.delete_function(slug))
 
+    def list_buckets(self):
+        return self._call("list_buckets", {}, self._adapter.list_buckets)
+
+    def create_bucket(self, name: str, *, public=False, file_size_limit=None, allowed_mime_types=None):
+        return self._call(
+            "create_bucket",
+            {
+                "name": name,
+                "public": bool(public),
+                "file_size_limit": file_size_limit,
+                "allowed_mime_types": allowed_mime_types,
+            },
+            lambda: self._adapter.create_bucket(
+                name, public=public, file_size_limit=file_size_limit, allowed_mime_types=allowed_mime_types
+            ),
+        )
+
+    def update_bucket(self, name: str, *, public=None, file_size_limit=None, allowed_mime_types=None):
+        return self._call(
+            "update_bucket",
+            {
+                "name": name,
+                "public": public,
+                "file_size_limit": file_size_limit,
+                "allowed_mime_types": allowed_mime_types,
+            },
+            lambda: self._adapter.update_bucket(
+                name, public=public, file_size_limit=file_size_limit, allowed_mime_types=allowed_mime_types
+            ),
+        )
+
+    def delete_bucket(self, name: str):
+        return self._call("delete_bucket", {"name": name}, lambda: self._adapter.delete_bucket(name))
+
     def get_schema(self):
         # composed of audited calls: each underlying list/describe is recorded
         return {t: self.describe_table(t) for t in self.list_tables()}

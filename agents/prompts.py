@@ -43,6 +43,17 @@ when updating, ALWAYS read_function first and change only what the task requires
 reviews your deploy as a diff against the live source. Keep secrets out of function code \
 (use environment variables)."""
 
+STORAGE_PROMPT = """# Storage
+This instance supports storage buckets: list_buckets shows what exists; create_bucket / \
+update_bucket / delete_bucket manage the structure (delete works only on EMPTY buckets). \
+Storage POLICIES are plain SQL — RLS on storage.objects: inspect them with query_sql \
+(pg_policies) and write them with execute_sql. Files themselves are managed in the Supabase \
+dashboard, not here: Diabase governs structure and access rules, never blobs."""
+
+# capability blocks, injected in a fixed order (prompt caching needs a
+# byte-identical prefix across turns)
+CAPABILITY_PROMPTS = [("functions", FUNCTIONS_PROMPT), ("storage", STORAGE_PROMPT)]
+
 
 def build_system_prompt(project) -> str:
     """Base rules + capability blocks + plan-mode rules + project prompt +
@@ -54,8 +65,8 @@ def build_system_prompt(project) -> str:
 
     parts = [BASE_SYSTEM_PROMPT]
     adapter_cls = ADAPTERS.get(project.server.adapter_type)
-    if adapter_cls and "functions" in adapter_cls.capabilities:
-        parts.append(FUNCTIONS_PROMPT)
+    caps = adapter_cls.capabilities if adapter_cls else frozenset()
+    parts.extend(prompt for cap, prompt in CAPABILITY_PROMPTS if cap in caps)
     if getattr(project, "autonomy_level", "") == "plan":
         parts.append(PLAN_MODE_PROMPT)
     extra = (project.system_prompt or "").strip()

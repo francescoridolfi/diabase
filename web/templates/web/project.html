@@ -52,6 +52,7 @@
       <button class="mt active" data-view="chat">Chat</button>
       <button class="mt" data-view="pane-schema">Schema</button>
       {% if "functions" in server_caps %}<button class="mt" data-view="pane-functions">Fn</button>{% endif %}
+      {% if "storage" in server_caps %}<button class="mt" data-view="pane-storage">Storage</button>{% endif %}
       <button class="mt" data-view="pane-audit">Audit</button>
       <button class="mt" data-view="pane-context">Context</button>
       <button class="mt" data-view="pane-settings">Settings</button>
@@ -72,6 +73,7 @@
     <nav class="tabs" role="tablist">
       <button class="tab active" role="tab" data-pane="pane-schema">Schema</button>
       {% if "functions" in server_caps %}<button class="tab" role="tab" data-pane="pane-functions">Functions</button>{% endif %}
+      {% if "storage" in server_caps %}<button class="tab" role="tab" data-pane="pane-storage">Storage</button>{% endif %}
       <button class="tab" role="tab" data-pane="pane-audit">Audit</button>
       <button class="tab" role="tab" data-pane="pane-context">Context</button>
       <button class="tab" role="tab" data-pane="pane-settings">Settings</button>
@@ -95,6 +97,13 @@
     <div class="pane" id="pane-functions" role="tabpanel" hidden>
       <h2 class="pane-label">Edge functions <span class="dim-note">— the agent deploys through plans; your edits here deploy audited in your name</span></h2>
       <div id="fn-list"><p class="dim-note">Loading…</p></div>
+    </div>
+    {% endif %}
+
+    {% if "storage" in server_caps %}
+    <div class="pane" id="pane-storage" role="tabpanel" hidden>
+      <h2 class="pane-label">Buckets <span class="dim-note">— structure and access rules; files live in the Supabase dashboard</span></h2>
+      <div id="bucket-list"><p class="dim-note">Loading…</p></div>
     </div>
     {% endif %}
 
@@ -226,6 +235,7 @@
     schemaUrl: "{% url 'schema_json' project.pk %}",
     serverCaps: {{ server_caps|default:"[]"|safe }},
     functionsUrl: "{% url 'functions_json' project.pk %}",
+    storageUrl: "{% url 'storage_json' project.pk %}",
     monacoBase: "{% static 'web/vendor/monaco/vs' %}",
     {% if project.server.adapter_type == "supabase" %}supabaseDashboard: "https://supabase.com/dashboard/project/{{ project.server.dsn }}",{% endif %}
     auditUrl: "{% url 'audit_partial' project.pk %}",
