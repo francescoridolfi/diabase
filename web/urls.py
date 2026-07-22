@@ -29,7 +29,14 @@ urlpatterns = [
     path("projects/<int:pk>/schema/", views.schema_json, name="schema_json"),
     path("projects/<int:pk>/functions/", views.functions_json, name="functions_json"),
     path(
-        "projects/<int:pk>/functions/<slug:slug>/body/", views.function_body_json, name="function_body_json"
+        "projects/<int:pk>/functions/<slug:slug>/source/",
+        views.function_source_json,
+        name="function_source_json",
+    ),
+    path(
+        "projects/<int:pk>/functions/<slug:slug>/deploy/",
+        views.function_deploy,
+        name="function_deploy",
     ),
     path("projects/<int:pk>/audit/", views.audit_partial, name="audit_partial"),
     path("projects/<int:pk>/audit/log/", views.audit_log, name="audit_log"),

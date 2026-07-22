@@ -173,18 +173,23 @@
 </div>
 
 {% if "functions" in server_caps %}
-<div class="modal-overlay" id="fn-viewer" role="dialog" aria-modal="true" aria-label="Function source">
+<div class="modal-overlay" id="fn-editor" role="dialog" aria-modal="true" aria-label="Function editor">
   <div class="panel-header">
     <div style="display:flex; align-items:baseline; gap:0.8rem; min-width:0">
-      <h2 style="margin:0" id="fn-viewer-title">function</h2>
-      <span class="editor-meta" id="fn-viewer-meta"></span>
+      <h2 style="margin:0" id="fn-editor-title">function</h2>
+      <span class="editor-meta" id="fn-editor-meta"></span>
     </div>
     <div style="display:flex; gap:0.5rem; align-items:center">
-      <a class="ghost btn-link" id="fn-viewer-open" href="#" target="_blank" rel="noopener">Open in Supabase ↗</a>
+      <a class="ghost btn-link" id="fn-editor-open" href="#" target="_blank" rel="noopener">Open in Supabase ↗</a>
       <button class="ghost" data-close>Close (Esc)</button>
     </div>
   </div>
-  <pre class="fn-source"><code id="fn-viewer-body"></code></pre>
+  <p class="fn-drift" id="fn-editor-drift" hidden>⚠ The live version differs from the one Diabase deployed — someone worked outside. Deploying will overwrite it.</p>
+  <div class="monaco-host" id="monaco-host"><p class="dim-note" style="padding:0.8rem">Loading editor…</p></div>
+  <div class="editor-footer">
+    <span class="editor-meta" id="fn-editor-status"></span>
+    <button id="fn-editor-deploy">Deploy</button>
+  </div>
 </div>
 {% endif %}
 
@@ -219,6 +224,7 @@
     schemaUrl: "{% url 'schema_json' project.pk %}",
     serverCaps: {{ server_caps|default:"[]"|safe }},
     functionsUrl: "{% url 'functions_json' project.pk %}",
+    monacoBase: "{% static 'web/vendor/monaco/vs' %}",
     {% if project.server.adapter_type == "supabase" %}supabaseDashboard: "https://supabase.com/dashboard/project/{{ project.server.dsn }}",{% endif %}
     auditUrl: "{% url 'audit_partial' project.pk %}",
     auditLogUrl: "{% url 'audit_log' project.pk %}",

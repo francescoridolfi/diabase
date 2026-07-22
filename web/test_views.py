@@ -570,11 +570,60 @@ class TestFunctionsViews:
         assert r.status_code == 200
         assert r.json()["functions"][0]["slug"] == "greet"
 
-    def test_function_body_json(self, client, project):
+    def test_source_json_prefers_the_tracked_copy(self, client, project):
+        from instances.services import save_function_source
+
+        save_function_source(project.server, "greet", "tracked code", version=3, actor="francesco")
+        r = client.get(reverse("function_source_json", args=[project.pk, "greet"]))
+        data = r.json()
+        assert data["tracked"] is True and data["body"] == "tracked code"
+        assert data["deployed_version"] == 3 and data["deployed_by"] == "francesco"
+
+    def test_source_json_falls_back_to_the_api_for_untracked(self, client, project):
         with mock.patch("web.views.get_adapter") as ga:
-            ga.return_value.get_function_body.return_value = "Deno.serve(...)"
-            r = client.get(reverse("function_body_json", args=[project.pk, "greet"]))
-        assert r.json() == {"slug": "greet", "body": "Deno.serve(...)"}
+            ga.return_value.get_function_body.return_value = "legacy source"
+            r = client.get(reverse("function_source_json", args=[project.pk, "greet"]))
+        assert r.json() == {"slug": "greet", "body": "legacy source", "tracked": False}
+
+    def test_functions_json_annotates_tracked_and_drift(self, client, project):
+        from instances.services import save_function_source
+
+        save_function_source(project.server, "greet", "code", version=3)
+        with mock.patch("web.views.get_adapter") as ga:
+            ga.return_value.list_functions.return_value = [
+                {"slug": "greet", "version": 5},  # live moved past us: drift
+                {"slug": "other", "version": 1},  # never seen: untracked
+            ]
+            r = client.get(reverse("functions_json", args=[project.pk]))
+        rows = {f["slug"]: f for f in r.json()["functions"]}
+        assert rows["greet"]["tracked"] is True and rows["greet"]["drift"] is True
+        assert rows["other"]["tracked"] is False and rows["other"]["drift"] is False
+
+    def test_user_deploy_is_audited_and_tracked(self, client, project):
+        from instances.services import get_function_source
+
+        with mock.patch("web.views.get_adapter") as ga:
+            ga.return_value.deploy_function.return_value = {"slug": "greet", "version": 9, "status": "ACTIVE"}
+            r = client.post(
+                reverse("function_deploy", args=[project.pk, "greet"]),
+                data=json.dumps({"body": "Deno.serve(x)", "verify_jwt": False}),
+                content_type="application/json",
+            )
+        assert r.status_code == 200 and r.json()["version"] == 9
+        src = get_function_source(project.server, "greet")
+        assert src.body == "Deno.serve(x)" and src.deployed_version == 9
+        assert src.deployed_by == "francesco" and src.verify_jwt is False
+        entry = AuditEntry.objects.get(action="deploy_function")
+        assert entry.actor_type == "user" and entry.actor == "francesco"
+        assert entry.payload_in["body"] == "Deno.serve(x)"  # the full code, in the trail
+
+    def test_user_deploy_rejects_empty_source(self, client, project):
+        r = client.post(
+            reverse("function_deploy", args=[project.pk, "greet"]),
+            data=json.dumps({"body": "   "}),
+            content_type="application/json",
+        )
+        assert r.status_code == 400
 
     def test_adapter_errors_become_502(self, client, project):
         from instances.adapters import AdapterError
@@ -591,7 +640,7 @@ class TestFunctionsViews:
         project.server.save()
         r = client.get(reverse("project_room", args=[project.pk]))
         assert b"pane-functions" in r.content
-        assert b'id="fn-viewer"' in r.content
+        assert b'id="fn-editor"' in r.content
 
     def test_plan_json_carries_step_meta(self, client, project, proposed_plan):
         step = proposed_plan.steps.get()

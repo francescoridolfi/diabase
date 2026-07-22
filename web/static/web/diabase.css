@@ -585,13 +585,15 @@ body.overlay-open .overlay-veil { opacity: 1; pointer-events: auto; }
 .diff .diff-del { color: var(--danger); }
 .diff .diff-hunk { color: var(--aura-3); }
 
-/* read-only function source viewer */
-.fn-source {
-  flex: 1 1 auto; min-height: 0; overflow: auto; margin: 0 0 1.2rem;
-  background: rgba(10, 12, 17, 0.6); border: 1px solid var(--line);
-  border-radius: var(--radius-sm); padding: 0.8rem 1rem;
+/* Monaco host inside the function editor modal */
+.monaco-host {
+  flex: 1 1 auto; min-height: 0; overflow: hidden;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
 }
-.fn-source code { font-family: var(--mono); font-size: 0.82rem; line-height: 1.55; white-space: pre; }
+.fn-drift {
+  margin: 0 0 0.6rem; padding: 0.45rem 0.7rem; font-size: 0.78rem;
+  color: var(--write); border: 1px dashed var(--write); border-radius: var(--radius-sm);
+}
 .btn-link { display: inline-flex; align-items: center; border: 1px solid var(--line-strong); border-radius: var(--radius-sm); padding: 0.35rem 0.7rem; font-size: 0.78rem; color: var(--dim); }
 .btn-link:hover { color: var(--txt); border-color: var(--aura-3); }
 .plan-actions { display: flex; gap: 0.5rem; margin-top: 0.7rem; }

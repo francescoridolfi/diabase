@@ -334,22 +334,19 @@ class TestSupabaseFunctions:
             with pytest.raises(AdapterError, match="bundle"):
                 a.get_function_body("hello")
 
-    def test_deploy_creates_or_patches_based_on_existence(self, monkeypatch):
+    def test_deploy_uses_the_bundle_endpoint_with_multipart_source(self, monkeypatch):
+        """The dashboard/CLI-compatible deploy path: multipart source in,
+        eszip built server-side, artifact in the response ignored."""
         a = self._adapter(monkeypatch)
-        calls = []
-
-        def fake_api(method, path, payload=None, **kw):
-            calls.append((method, path))
-            if path == "/functions" and method == "GET":
-                return [{"slug": "existing"}]
-            return {"version": 7, "status": "ACTIVE"}
-
-        with mock.patch.object(a, "_api", side_effect=fake_api):
-            fresh = a.deploy_function("brand-new", "code")
-            updated = a.deploy_function("existing", "code")
-        assert ("POST", "/functions") in calls
-        assert ("PATCH", "/functions/existing") in calls
-        assert fresh["updated"] is False and updated["updated"] is True
+        with mock.patch.object(a, "_api", return_value={"version": 7, "status": "ACTIVE"}) as api:
+            out = a.deploy_function("hello", "Deno.serve(() => new Response('hi'))", verify_jwt=False)
+        method, path = api.call_args.args
+        assert (method, path) == ("POST", "/functions/deploy?slug=hello")
+        form = api.call_args.kwargs["data"].decode()
+        assert 'name="metadata"' in form and '"verify_jwt": false' in form
+        assert 'filename="index.ts"' in form and "Deno.serve" in form
+        assert api.call_args.kwargs["content_type"].startswith("multipart/form-data; boundary=")
+        assert out == {"slug": "hello", "version": 7, "status": "ACTIVE"}
 
     def test_slug_validation(self, monkeypatch):
         a = self._adapter(monkeypatch)
