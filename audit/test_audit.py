@@ -88,3 +88,20 @@ class TestAuditedAdapter:
         audited.get_schema()
         after = AuditEntry.objects.count()
         assert after == before + 2  # one list_tables + one describe_table
+
+    def test_auth_config_update_payload_is_redacted_in_the_trail(self, project):
+        """Defense in depth: the adapter refuses secret writes, but even
+        the ATTEMPT must not land in the audit trail with a readable value."""
+
+        class FakeAdapter:
+            capabilities = frozenset({"auth_config"})
+
+            def update_auth_config(self, changes):
+                raise AdapterError("Refusing to set secret keys through Diabase: smtp_pass")
+
+        audited = AuditedAdapter(FakeAdapter(), project=project, actor="claude-test")
+        with pytest.raises(AdapterError):
+            audited.update_auth_config({"smtp_pass": "hunter2", "site_url": "https://x"})
+        entry = AuditEntry.objects.get(action="update_auth_config")
+        assert entry.outcome == "error"
+        assert entry.payload_in == {"changes": {"smtp_pass": "***set***", "site_url": "https://x"}}  # noqa: S105 # nosec B105

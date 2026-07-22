@@ -39,17 +39,47 @@ export function initPlan({ log, chat, orb, timeline, urls, csrf, onApplySettled 
     return `<pre class="diff"><code>${lines}</code></pre>`;
   }
 
+  /* changed-keys review for update_auth_config: scalar keys as from → to
+     rows, long text (email templates) already rendered by the diff below */
+  function renderConfigChanges(changes) {
+    const rows = changes
+      .map(
+        (c) => `<div class="cfg-change"><code>${esc(c.key)}</code>
+          <span class="cfg-from">${esc(String(c.from ?? "—"))}</span><span class="cfg-arrow">→</span>
+          <span class="cfg-to">${esc(String(c.to ?? "—"))}</span></div>`
+      )
+      .join("");
+    return `<div class="cfg-changes">${rows}</div>`;
+  }
+
   function stepBody(s) {
     if (s.payload && s.payload.sql) return `<pre><code>${esc(s.payload.sql)}</code></pre>`;
     if (s.tool === "deploy_function") {
       if (s.meta && s.meta.diff) return renderDiff(s.meta.diff); // update: review the change
       if (s.payload && s.payload.body) return `<pre><code>${esc(s.payload.body)}</code></pre>`; // new: review it all
     }
+    if (s.tool === "update_auth_config" && s.meta) {
+      let out = "";
+      if (s.meta.changes && s.meta.changes.length) out += renderConfigChanges(s.meta.changes);
+      if (s.meta.diff) out += renderDiff(s.meta.diff);
+      if (out) return out;
+    }
+    if (s.tool === "create_bucket" || s.tool === "update_bucket" || s.tool === "delete_bucket") {
+      const p = s.payload || {};
+      const bits = [];
+      if ("public" in p) bits.push(p.public ? "public" : "private");
+      if (p.file_size_limit != null) bits.push(p.file_size_limit ? `≤ ${p.file_size_limit} B` : "no size limit");
+      if (p.allowed_mime_types) bits.push(p.allowed_mime_types.length ? p.allowed_mime_types.join(", ") : "any type");
+      return bits.length ? `<div class="muted">${esc(bits.join(" · "))}</div>` : "";
+    }
     return "";
   }
 
   function stepLabel(s) {
-    const target = s.payload && s.payload.slug ? ` <b>${esc(s.payload.slug)}</b>` : "";
+    const target =
+      s.payload && (s.payload.slug || s.payload.name)
+        ? ` <b>${esc(s.payload.slug || s.payload.name)}</b>`
+        : "";
     const fresh = s.tool === "deploy_function" && s.meta && !s.meta.updates_existing ? " (new)" : "";
     return `Step ${s.order} · ${esc(s.tool)}${target}${fresh}`;
   }

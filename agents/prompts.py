@@ -50,9 +50,22 @@ Storage POLICIES are plain SQL — RLS on storage.objects: inspect them with que
 (pg_policies) and write them with execute_sql. Files themselves are managed in the Supabase \
 dashboard, not here: Diabase governs structure and access rules, never blobs."""
 
+AUTH_PROMPT = """# Auth configuration
+This instance exposes its auth (GoTrue) settings. get_auth_config returns the current \
+configuration with secret values masked as "***set***" — you can see WHETHER a secret is \
+configured, never its value, and you cannot set one: the user enters secrets in the Supabase \
+dashboard. update_auth_config PATCHes only the keys you pass; the user reviews every changed \
+key, and email template changes as an HTML diff — when editing a template, get_auth_config \
+first and change only what the task requires. Auth USERS are data, not configuration: they \
+are not managed through these tools."""
+
 # capability blocks, injected in a fixed order (prompt caching needs a
 # byte-identical prefix across turns)
-CAPABILITY_PROMPTS = [("functions", FUNCTIONS_PROMPT), ("storage", STORAGE_PROMPT)]
+CAPABILITY_PROMPTS = [
+    ("functions", FUNCTIONS_PROMPT),
+    ("storage", STORAGE_PROMPT),
+    ("auth_config", AUTH_PROMPT),
+]
 
 
 def build_system_prompt(project) -> str:

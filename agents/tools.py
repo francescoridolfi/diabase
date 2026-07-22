@@ -194,6 +194,36 @@ TOOLS: list[ToolSpec] = [
         capability="storage",
     ),
     ToolSpec(
+        name="get_auth_config",
+        description=(
+            "Read the project's auth (GoTrue) configuration: signup, providers, email templates, "
+            "security settings. Secret values are masked as ***set*** — you never see them."
+        ),
+        input_schema={"type": "object", "properties": {}, "required": []},
+        risk=Risk.READ,
+        capability="auth_config",
+    ),
+    ToolSpec(
+        name="update_auth_config",
+        description=(
+            "Change auth configuration: pass ONLY the keys to change (the user reviews each one, "
+            "and email template changes as an HTML diff). Secrets (smtp_pass, oauth secrets...) "
+            "cannot be set through Diabase — the user enters them in the Supabase dashboard."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "changes": {
+                    "type": "object",
+                    "description": "The auth config keys to change, with their new values.",
+                }
+            },
+            "required": ["changes"],
+        },
+        risk=Risk.WRITE,
+        capability="auth_config",
+    ),
+    ToolSpec(
         name="read_context_file",
         description=(
             "Read part of a project context file (see the context index in the system prompt). "
@@ -281,6 +311,19 @@ class BoundToolset:
         decision = self.policy.check(spec)
         if not decision.allowed:
             raise ToolDenied(decision.reason)
+        if name == "update_auth_config":
+            # secrets must not even be QUEUED: a queued step's payload is
+            # stored and rendered in the plan card
+            from instances.adapters import is_auth_secret
+
+            secrets = sorted(k for k in (payload.get("changes") or {}) if is_auth_secret(k))
+            if secrets:
+                return {
+                    "error": (
+                        f"Refusing to set secret keys through Diabase: {', '.join(secrets)} — "
+                        "ask the user to enter them in the Supabase dashboard"
+                    )
+                }
         if decision.requires_plan:
             return self._queue_step(spec, payload)
         try:
@@ -327,6 +370,10 @@ class BoundToolset:
                 )
             if name == "delete_bucket":
                 return self.adapter.delete_bucket(payload["name"])
+            if name == "get_auth_config":
+                return {"config": self.adapter.get_auth_config()}
+            if name == "update_auth_config":
+                return self.adapter.update_auth_config(payload["changes"])
             if name == "read_context_file":
                 return self._read_context_file(
                     payload["name"], payload.get("offset") or 1, payload.get("limit") or READ_DEFAULT_LIMIT
@@ -434,7 +481,10 @@ class BoundToolset:
         """Review context captured at QUEUE time, so the card shows what
         the decision is really about. For deploy_function: a unified diff
         against the source we track locally (or the API body for legacy
-        deployments)."""
+        deployments). For update_auth_config: each changed key with its
+        live value, long text (email templates) as a unified diff."""
+        if spec.name == "update_auth_config":
+            return self._auth_review_meta(payload)
         if spec.name != "deploy_function":
             return {}
         import difflib
@@ -461,6 +511,42 @@ class BoundToolset:
             )
         )
         return {"updates_existing": exists, "diff": diff if exists else ""}
+
+    # long-text auth values (email templates above all) review better as a
+    # diff than as a from→to pair
+    AUTH_DIFF_THRESHOLD = 120
+
+    def _auth_review_meta(self, payload: dict) -> dict:
+        import difflib
+
+        changes = payload.get("changes") or {}
+        if not isinstance(changes, dict) or not changes:
+            return {}
+        try:
+            current = self.adapter.get_auth_config()
+        except Exception:  # config unreadable: review falls back to new values only
+            current = {}
+        fields, diffs = [], []
+        for key in sorted(changes):
+            live, proposed = current.get(key), changes[key]
+            long_text = isinstance(proposed, str) and (
+                "\n" in proposed or len(proposed) > self.AUTH_DIFF_THRESHOLD
+            )
+            if long_text:
+                diffs.append(
+                    "\n".join(
+                        difflib.unified_diff(
+                            str(live or "").splitlines(),
+                            proposed.splitlines(),
+                            fromfile=f"{key} (live)",
+                            tofile=f"{key} (proposed)",
+                            lineterm="",
+                        )
+                    )
+                )
+            else:
+                fields.append({"key": key, "from": live, "to": proposed})
+        return {"changes": fields, "diff": "\n".join(d for d in diffs if d)}
 
     def _read_context_file(self, file_name: str, offset: int, limit: int) -> dict:
         """Context files live in Diabase's own DB, not behind the adapter,

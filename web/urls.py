@@ -39,6 +39,7 @@ urlpatterns = [
         name="function_deploy",
     ),
     path("projects/<int:pk>/storage/", views.storage_json, name="storage_json"),
+    path("projects/<int:pk>/auth-config/", views.auth_config_json, name="auth_config_json"),
     path("projects/<int:pk>/audit/", views.audit_partial, name="audit_partial"),
     path("projects/<int:pk>/audit/log/", views.audit_log, name="audit_log"),
     path("projects/<int:pk>/settings/", views.project_update, name="project_update"),

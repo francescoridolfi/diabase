@@ -886,6 +886,97 @@ class TestStorageTools:
         assert "# Storage" in prompt and "storage.objects" in prompt
 
 
+class TestAuthConfigTools:
+    """Auth tools: capability-gated, plan-gated, and the secret discipline
+    holds at every layer — read masked, writes refused before queueing."""
+
+    def _auth_toolset(self, project, level="plan", turn=None):
+        class FakeAuthAdapter:
+            capabilities = frozenset({"auth_config"})
+
+            def __init__(self):
+                self.config = {
+                    "site_url": "https://old.example",
+                    "disable_signup": False,
+                    "smtp_pass": "***set***",  # noqa: S105 — already-masked value, as the real adapter serves it
+                    "mailer_templates_confirmation_content": "<h1>Hello</h1>\n<p>old body</p>",
+                }
+                self.patched = None
+
+            def get_auth_config(self):
+                return dict(self.config)
+
+            def update_auth_config(self, changes):
+                self.patched = changes
+                self.config.update(changes)
+                return {"updated": sorted(changes)}
+
+        return BoundToolset(
+            adapter=FakeAuthAdapter(), policy=AutonomyPolicy(level), project=project, actor="test", turn=turn
+        )
+
+    def test_auth_tools_hidden_without_the_capability(self, project):
+        toolset = make_toolset(project)  # sqlite adapter: no "auth_config"
+        names = [s.name for s in toolset.allowed_specs()]
+        assert "get_auth_config" not in names and "update_auth_config" not in names
+        out = toolset.execute("get_auth_config", {})
+        assert "not supported" in out["error"]
+
+    def test_read_executes_immediately_and_is_masked(self, project):
+        toolset = self._auth_toolset(project, turn=make_turn(project))
+        out = toolset.execute("get_auth_config", {})
+        assert out["config"]["site_url"] == "https://old.example"
+        assert out["config"]["smtp_pass"] == "***set***"  # noqa: S105 # nosec B105
+
+    def test_update_is_queued_with_changed_keys_meta(self, project):
+        from agents.models import PlanStep
+
+        toolset = self._auth_toolset(project, turn=make_turn(project))
+        out = toolset.execute(
+            "update_auth_config", {"changes": {"disable_signup": True, "site_url": "https://new.example"}}
+        )
+        assert out["planned"]["step"] == 1
+        assert toolset.adapter.patched is None  # nothing touched the instance
+        step = PlanStep.objects.get()
+        assert step.meta["changes"] == [
+            {"key": "disable_signup", "from": False, "to": True},
+            {"key": "site_url", "from": "https://old.example", "to": "https://new.example"},
+        ]
+        assert step.meta["diff"] == ""
+
+    def test_template_change_reviews_as_a_diff(self, project):
+        from agents.models import PlanStep
+
+        toolset = self._auth_toolset(project, turn=make_turn(project))
+        new_tpl = "<h1>Hello</h1>\n<p>new body</p>"
+        toolset.execute("update_auth_config", {"changes": {"mailer_templates_confirmation_content": new_tpl}})
+        step = PlanStep.objects.get()
+        assert step.meta["changes"] == []
+        assert "-<p>old body</p>" in step.meta["diff"] and "+<p>new body</p>" in step.meta["diff"]
+
+    def test_secret_writes_are_refused_before_queueing(self, project):
+        from agents.models import PlanStep
+
+        toolset = self._auth_toolset(project, turn=make_turn(project))
+        out = toolset.execute("update_auth_config", {"changes": {"smtp_pass": "hunter2"}})
+        assert "secret keys" in out["error"] and "smtp_pass" in out["error"]
+        assert PlanStep.objects.count() == 0  # the value never landed anywhere
+
+    def test_full_autonomy_executes_updates(self, project):
+        toolset = self._auth_toolset(project, level="full")
+        out = toolset.execute("update_auth_config", {"changes": {"disable_signup": True}})
+        assert out == {"updated": ["disable_signup"]}
+        assert toolset.adapter.patched == {"disable_signup": True}
+
+    def test_auth_prompt_only_for_capable_adapters(self, project):
+        from agents.prompts import build_system_prompt
+
+        assert "# Auth configuration" not in build_system_prompt(project)  # sqlite
+        project.server.adapter_type = "supabase"
+        prompt = build_system_prompt(project)
+        assert "# Auth configuration" in prompt and "***set***" in prompt
+
+
 class TestFunctionSourceTracking:
     """Local-first sources: Diabase keeps what it deploys and reads from
     its own copy; drift with the live version is detectable, never hidden."""

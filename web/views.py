@@ -212,6 +212,18 @@ def storage_json(request, pk):
     return JsonResponse({"buckets": buckets})
 
 
+def auth_config_json(request, pk):
+    """The auth (GoTrue) configuration for the Auth tab. Secrets arrive
+    already masked: redaction happens in the adapter, before ANY consumer."""
+    project = get_object_or_404(Project.objects.select_related("server"), pk=pk)
+    server = project.server
+    try:
+        config = get_adapter(server.adapter_type, server.dsn).get_auth_config()
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=502)
+    return JsonResponse({"config": config})
+
+
 def function_source_json(request, pk, slug):
     """The locally tracked source for the editor; falls back to the API
     body for legacy (pre-bundle) deployments made outside Diabase."""

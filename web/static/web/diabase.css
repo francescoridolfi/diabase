@@ -595,6 +595,24 @@ body.overlay-open .overlay-veil { opacity: 1; pointer-events: auto; }
   flex: 1 1 auto; min-height: 0; overflow: hidden;
   border: 1px solid var(--line); border-radius: var(--radius-sm);
 }
+/* auth config change rows inside the plan card: key, live value, new value */
+.cfg-changes { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.35rem; }
+.cfg-change {
+  display: flex; align-items: baseline; gap: 0.5rem; font-size: 0.8rem;
+  flex-wrap: wrap;
+}
+.cfg-change code { color: var(--aura-3); }
+.cfg-change .cfg-from { color: var(--dim); text-decoration: line-through; }
+.cfg-change .cfg-arrow { color: var(--dim); }
+.cfg-change .cfg-to { color: var(--read); }
+
+/* email template preview inside the auth modal: a real HTML document in
+   a scriptless sandbox — emails assume a light canvas, give them one */
+.tpl-frame {
+  flex: 1 1 auto; min-height: 0; width: 100%;
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: #fff;
+}
 .fn-drift {
   margin: 0 0 0.6rem; padding: 0.45rem 0.7rem; font-size: 0.78rem;
   color: var(--write); border: 1px dashed var(--write); border-radius: var(--radius-sm);
