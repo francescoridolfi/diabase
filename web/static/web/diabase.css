@@ -320,6 +320,11 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
   filter: blur(14px); opacity: 0.9;
   animation: aura-spin var(--ospin) linear infinite, glow-breathe 3.5s ease-in-out infinite;
 }
+/* sparks riding the border (see particles.js): bleeds past the panel so
+   the glow isn't clipped, never catches the pointer */
+.orbit-particles {
+  position: absolute; inset: -12px; pointer-events: none; z-index: 1;
+}
 
 .tabs { display: flex; gap: 0.15rem; padding: 0.55rem 0.9rem 0; flex: 0 0 auto; }
 .tab {

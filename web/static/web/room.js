@@ -10,6 +10,7 @@ import { initTimeline } from "./timeline.js";
 import { initChat } from "./chat.js";
 import { initPlan } from "./plan.js";
 import { initContext } from "./context.js";
+import { initParticles } from "./particles.js";
 
 const urls = window.DIABASE;
 const csrf = () => urls.csrfToken || document.querySelector("[name=csrfmiddlewaretoken]").value;
@@ -68,6 +69,8 @@ const plan = initPlan({ log: document.getElementById("chatlog"), chat, orb, time
 
 initContext({ chat, urls, csrf });
 // the sidebar drawer is handled globally by shell.js
+
+initParticles({ workspaceEl: document.getElementById("workspace") });
 
 // a turn already running when this page loaded (started before a refresh,
 // or from another tab) — reconnect from the beginning: every event is
