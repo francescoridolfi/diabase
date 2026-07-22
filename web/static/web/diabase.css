@@ -255,6 +255,27 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
 .side-link .ic { width: 1.1rem; text-align: center; opacity: 0.9; }
 .burger { display: none; }
 
+/* account row: username (→ change password) + sign out */
+.side-account { display: flex; align-items: center; border-top: 1px dashed var(--line); margin-top: 0.35rem; padding-top: 0.35rem; }
+.side-account .side-link { flex: 1 1 auto; min-width: 0; }
+.side-out {
+  background: none; border: 0; color: var(--dim); font-size: 0.9rem;
+  padding: 0.3rem 0.5rem; border-radius: 8px;
+}
+.side-out:hover { color: var(--danger); filter: none; transform: none; }
+
+/* ---------- auth pages (login / password change): no shell, just the orb ---------- */
+.auth-wrap {
+  min-height: 100dvh; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 1rem; padding: 1.5rem;
+}
+.auth-logo { font-weight: 700; font-size: 1.15rem; letter-spacing: 0.02em; }
+.auth-logo em { font-style: normal; background: linear-gradient(90deg, var(--aura-1), var(--aura-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.auth-card { width: min(380px, 92vw); }
+.auth-error { color: var(--danger); font-size: 0.82rem; margin: 0 0 0.5rem; }
+.auth-hint { max-width: 40ch; text-align: center; }
+.auth-hint code { background: #0b0e16; border: 1px solid var(--line); border-radius: 5px; padding: 0.05rem 0.35rem; font-family: var(--mono); font-size: 0.85em; }
+
 /* listing rows: the link area inside a .file-row (projects page) */
 .row-link { min-width: 0; flex: 1 1 auto; display: flex; }
 .row-link .fname { color: var(--txt); }

@@ -13,6 +13,15 @@ from workspaces.models import Project
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def operator(client, django_user_model):
+    """Every view sits behind LoginRequiredMiddleware: the test client is
+    the instance operator, already past the forced password change."""
+    user = django_user_model.objects.create_user("francesco", password="not-the-factory-one")  # nosec B106
+    client.force_login(user)
+    return user
+
+
 @pytest.fixture
 def project(tmp_path):
     server = Server.objects.create(name="Local", adapter_type="sqlite", dsn=str(tmp_path / "t.db"))
@@ -488,3 +497,66 @@ class TestGlobalShell:
         assert not Project.objects.exists()
         entry = AuditEntry.objects.get(action="server.deleted")
         assert entry.payload_in["projects"] == ["Room"]
+
+
+class TestAuth:
+    def test_anonymous_is_redirected_to_login(self, project):
+        from django.test import Client
+
+        anon = Client()
+        for name, args in (("home", []), ("project_room", [project.pk]), ("settings", [])):
+            r = anon.get(reverse(name, args=args))
+            assert r.status_code == 302 and r.url.startswith(reverse("login")), name
+
+    def test_factory_password_forces_the_change_page(self, django_user_model):
+        """Logs in as the admin/admin user the SEED MIGRATION created —
+        the exact first-boot experience of a fresh instance."""
+        from django.test import Client
+
+        assert django_user_model.objects.filter(username="admin").exists()  # seeded by web/0001
+        c = Client()
+        r = c.post(reverse("login"), {"username": "admin", "password": "admin"})  # nosec B105
+        assert r.status_code == 302
+        # everything redirects to the password change until it's rotated
+        r = c.get(reverse("home"))
+        assert r.status_code == 302 and r.url == reverse("password_change")
+        r = c.get(reverse("connections"))
+        assert r.url == reverse("password_change")
+        # the change page itself is reachable
+        assert c.get(reverse("password_change")).status_code == 200
+
+        r = c.post(
+            reverse("password_change"),
+            {
+                "old_password": "admin",  # nosec B105
+                "new_password1": "a-long-real-password-1",
+                "new_password2": "a-long-real-password-1",
+            },
+        )
+        assert r.status_code == 302
+        # free to navigate now, and still logged in
+        assert c.get(reverse("home")).status_code == 200
+        actions = list(AuditEntry.objects.values_list("action", flat=True))
+        assert "auth.login" in actions and "auth.password_changed" in actions
+
+    def test_non_factory_login_is_not_forced(self, django_user_model):
+        from django.test import Client
+
+        django_user_model.objects.create_user("op", password="proper-password-9")  # nosec B106
+        c = Client()
+        c.post(reverse("login"), {"username": "op", "password": "proper-password-9"})  # nosec B105
+        assert c.get(reverse("home")).status_code == 200
+
+    def test_actor_is_the_logged_in_user(self, client, project):
+        client.post(reverse("chat_create", args=[project.pk]))
+        entry = AuditEntry.objects.get(action="chat.created")
+        assert entry.actor == "francesco"
+
+    def test_seed_migration_created_the_bootstrap_admin(self, django_user_model):
+        """The data migration ran while creating the test database with
+        zero users — exactly the fresh-instance path it exists for."""
+        from django.contrib.auth.hashers import check_password
+
+        seeded = django_user_model.objects.get(username="admin")
+        assert seeded.is_superuser
+        assert check_password("admin", seeded.password)

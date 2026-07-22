@@ -1,3 +1,9 @@
 <a class="side-link {% if nav_active == 'projects' %}on{% endif %}" href="{% url 'home' %}"><span class="ic">▤</span> Projects</a>
 <a class="side-link {% if nav_active == 'connections' %}on{% endif %}" href="{% url 'connections' %}"><span class="ic">⛁</span> Connections</a>
 <a class="side-link {% if nav_active == 'settings' %}on{% endif %}" href="{% url 'settings' %}"><span class="ic">⚙</span> Settings</a>
+<div class="side-account">
+  <a class="side-link" href="{% url 'password_change' %}" title="Change password"><span class="ic">◉</span> {{ request.user.username }}</a>
+  <form method="post" action="{% url 'logout' %}">{% csrf_token %}
+    <button type="submit" class="side-out" title="Sign out" aria-label="Sign out">⏻</button>
+  </form>
+</div>
