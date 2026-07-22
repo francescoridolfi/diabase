@@ -515,7 +515,7 @@ class TestAuth:
 
         assert django_user_model.objects.filter(username="admin").exists()  # seeded by web/0001
         c = Client()
-        r = c.post(reverse("login"), {"username": "admin", "password": "admin"})
+        r = c.post(reverse("login"), {"username": "admin", "password": "admin"})  # nosec B105
         assert r.status_code == 302
         # everything redirects to the password change until it's rotated
         r = c.get(reverse("home"))
@@ -528,7 +528,7 @@ class TestAuth:
         r = c.post(
             reverse("password_change"),
             {
-                "old_password": "admin",
+                "old_password": "admin",  # nosec B105
                 "new_password1": "a-long-real-password-1",
                 "new_password2": "a-long-real-password-1",
             },
@@ -544,7 +544,7 @@ class TestAuth:
 
         django_user_model.objects.create_user("op", password="proper-password-9")  # nosec B106
         c = Client()
-        c.post(reverse("login"), {"username": "op", "password": "proper-password-9"})
+        c.post(reverse("login"), {"username": "op", "password": "proper-password-9"})  # nosec B105
         assert c.get(reverse("home")).status_code == 200
 
     def test_actor_is_the_logged_in_user(self, client, project):
