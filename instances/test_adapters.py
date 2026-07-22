@@ -279,3 +279,86 @@ class TestQuerySql:
             "begin transaction read only; SELECT policyname FROM pg_policies; rollback",
         )
         assert out["rows"] == [{"policyname": "p1"}]
+
+
+class TestSupabaseFunctions:
+    """Edge functions via the Management API (capability "functions")."""
+
+    def _adapter(self, monkeypatch):
+        monkeypatch.setenv("SUPABASE_ACCESS_TOKEN", "sbp_test")
+        return SupabaseCloudAdapter(VALID_REF)
+
+    def test_capability_declared_only_on_supabase(self):
+        from instances.adapters import PostgresAdapter
+
+        assert "functions" in SupabaseCloudAdapter.capabilities
+        assert "functions" not in SQLiteAdapter.capabilities
+        assert "functions" not in PostgresAdapter.capabilities
+
+    def test_list_functions_normalizes_rows(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        rows = [
+            {
+                "slug": "hello",
+                "name": "hello",
+                "status": "ACTIVE",
+                "version": 3,
+                "verify_jwt": True,
+                "updated_at": "2026-07-22",
+                "id": "x",
+                "extra": 1,
+            }
+        ]
+        with mock.patch.object(a, "_api", return_value=rows) as api:
+            out = a.list_functions()
+        assert api.call_args.args == ("GET", "/functions")
+        assert out == [
+            {
+                "slug": "hello",
+                "name": "hello",
+                "status": "ACTIVE",
+                "version": 3,
+                "verify_jwt": True,
+                "updated_at": "2026-07-22",
+            }
+        ]
+
+    def test_get_function_body_returns_source(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with mock.patch.object(a, "_api", return_value="Deno.serve(() => new Response('hi'))"):
+            assert "Deno.serve" in a.get_function_body("hello")
+
+    def test_get_function_body_rejects_bundles(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with mock.patch.object(a, "_api", return_value="ESZP\x00\x01binary"):
+            with pytest.raises(AdapterError, match="bundle"):
+                a.get_function_body("hello")
+
+    def test_deploy_creates_or_patches_based_on_existence(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        calls = []
+
+        def fake_api(method, path, payload=None, **kw):
+            calls.append((method, path))
+            if path == "/functions" and method == "GET":
+                return [{"slug": "existing"}]
+            return {"version": 7, "status": "ACTIVE"}
+
+        with mock.patch.object(a, "_api", side_effect=fake_api):
+            fresh = a.deploy_function("brand-new", "code")
+            updated = a.deploy_function("existing", "code")
+        assert ("POST", "/functions") in calls
+        assert ("PATCH", "/functions/existing") in calls
+        assert fresh["updated"] is False and updated["updated"] is True
+
+    def test_slug_validation(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with pytest.raises(AdapterError, match="Invalid function slug"):
+            a.get_function_body("../../etc")
+
+    def test_delete_function(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with mock.patch.object(a, "_api", return_value=None) as api:
+            out = a.delete_function("hello")
+        assert api.call_args.args == ("DELETE", "/functions/hello")
+        assert out == {"slug": "hello", "deleted": True}

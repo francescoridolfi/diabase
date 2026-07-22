@@ -36,15 +36,26 @@ DROP ... IF EXISTS before recreating, ON CONFLICT), so applying over partially-a
 state cannot fail on "already exists"."""
 
 
-def build_system_prompt(project) -> str:
-    """Base rules + plan-mode rules (when active) + project prompt + context.
+FUNCTIONS_PROMPT = """# Edge functions
+This instance supports edge functions (Deno/TypeScript, single-file). Use list_functions / \
+read_function to inspect what is deployed. deploy_function creates or replaces a function — \
+when updating, ALWAYS read_function first and change only what the task requires: the user \
+reviews your deploy as a diff against the live source. Keep secrets out of function code \
+(use environment variables)."""
 
-    Deterministic by design (see workspaces.context): the prompt must be
-    byte-identical across turns for provider prompt caching to hit.
+
+def build_system_prompt(project) -> str:
+    """Base rules + capability blocks + plan-mode rules + project prompt +
+    context. Deterministic by design (see workspaces.context): the prompt
+    must be byte-identical across turns for provider prompt caching to hit.
     """
+    from instances.adapters import ADAPTERS
     from workspaces.context import build_context_block
 
     parts = [BASE_SYSTEM_PROMPT]
+    adapter_cls = ADAPTERS.get(project.server.adapter_type)
+    if adapter_cls and "functions" in adapter_cls.capabilities:
+        parts.append(FUNCTIONS_PROMPT)
     if getattr(project, "autonomy_level", "") == "plan":
         parts.append(PLAN_MODE_PROMPT)
     extra = (project.system_prompt or "").strip()

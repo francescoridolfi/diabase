@@ -6,7 +6,7 @@ const LS_OPEN = "diabase.ws.open";
 const LS_TAB = "diabase.ws.tab";
 const MOBILE = window.matchMedia("(max-width: 980px)");
 
-export function initWorkspace({ shellEl, workspaceEl, orbEl, mTabsEl, onSchemaShown }) {
+export function initWorkspace({ shellEl, workspaceEl, orbEl, mTabsEl, onPaneShown }) {
   const tabs = [...workspaceEl.querySelectorAll(".tab")];
   const panes = [...workspaceEl.querySelectorAll(".pane")];
   let activePane = localStorage.getItem(LS_TAB) || "pane-schema";
@@ -15,9 +15,9 @@ export function initWorkspace({ shellEl, workspaceEl, orbEl, mTabsEl, onSchemaSh
   function isOpen() {
     return shellEl.dataset.wsOpen === "1";
   }
-  function schemaVisible() {
-    if (MOBILE.matches) return mobileView === "pane-schema";
-    return isOpen() && activePane === "pane-schema";
+  function paneVisible(paneId) {
+    if (MOBILE.matches) return mobileView === paneId;
+    return isOpen() && activePane === paneId;
   }
 
   function selectTab(paneId) {
@@ -26,14 +26,14 @@ export function initWorkspace({ shellEl, workspaceEl, orbEl, mTabsEl, onSchemaSh
     localStorage.setItem(LS_TAB, paneId);
     tabs.forEach((t) => t.classList.toggle("active", t.dataset.pane === paneId));
     panes.forEach((p) => (p.hidden = p.id !== paneId));
-    if (paneId === "pane-schema") onSchemaShown();
+    onPaneShown(paneId);
   }
 
   function setOpen(open) {
     shellEl.dataset.wsOpen = open ? "1" : "0";
     orbEl.setAttribute("aria-pressed", String(open));
     localStorage.setItem(LS_OPEN, open ? "1" : "0");
-    if (open && activePane === "pane-schema") onSchemaShown();
+    if (open) onPaneShown(activePane);
   }
 
   function toggle() {
@@ -81,5 +81,5 @@ export function initWorkspace({ shellEl, workspaceEl, orbEl, mTabsEl, onSchemaSh
   setOpen(localStorage.getItem(LS_OPEN) !== "0");
   shellEl.dataset.mView = "chat";
 
-  return { toggle, selectTab, reveal, schemaVisible };
+  return { toggle, selectTab, reveal, paneVisible };
 }

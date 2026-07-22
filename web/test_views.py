@@ -560,3 +560,42 @@ class TestAuth:
         seeded = django_user_model.objects.get(username="admin")
         assert seeded.is_superuser
         assert check_password("admin", seeded.password)
+
+
+class TestFunctionsViews:
+    def test_functions_json_lists_via_adapter(self, client, project):
+        with mock.patch("web.views.get_adapter") as ga:
+            ga.return_value.list_functions.return_value = [{"slug": "greet", "status": "ACTIVE"}]
+            r = client.get(reverse("functions_json", args=[project.pk]))
+        assert r.status_code == 200
+        assert r.json()["functions"][0]["slug"] == "greet"
+
+    def test_function_body_json(self, client, project):
+        with mock.patch("web.views.get_adapter") as ga:
+            ga.return_value.get_function_body.return_value = "Deno.serve(...)"
+            r = client.get(reverse("function_body_json", args=[project.pk, "greet"]))
+        assert r.json() == {"slug": "greet", "body": "Deno.serve(...)"}
+
+    def test_adapter_errors_become_502(self, client, project):
+        from instances.adapters import AdapterError
+
+        with mock.patch("web.views.get_adapter") as ga:
+            ga.return_value.list_functions.side_effect = AdapterError("nope")
+            r = client.get(reverse("functions_json", args=[project.pk]))
+        assert r.status_code == 502 and r.json()["error"] == "nope"
+
+    def test_functions_tab_only_for_capable_servers(self, client, project):
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert b"pane-functions" not in r.content  # sqlite project
+        project.server.adapter_type = "supabase"
+        project.server.save()
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert b"pane-functions" in r.content
+        assert b'id="fn-viewer"' in r.content
+
+    def test_plan_json_carries_step_meta(self, client, project, proposed_plan):
+        step = proposed_plan.steps.get()
+        step.meta = {"updates_existing": True, "diff": "-a\n+b"}
+        step.save()
+        r = client.get(reverse("plan_json", args=[project.pk, proposed_plan.pk]))
+        assert r.json()["steps"][0]["meta"]["diff"] == "-a\n+b"

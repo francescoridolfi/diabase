@@ -705,3 +705,112 @@ class TestConversations:
         assert plan.continuation_turn.conversation == plan.turn.conversation
         report = ChatMessage.objects.get(kind="plan_result")
         assert report.conversation == plan.turn.conversation
+
+
+class TestFunctionTools:
+    """Capability-gated tools: advertised only where the instance supports
+    them, plan-gated like any write, with a review diff captured at queue
+    time."""
+
+    def test_function_tools_hidden_without_the_capability(self, project):
+        toolset = make_toolset(project)  # sqlite adapter: no "functions"
+        names = [s.name for s in toolset.allowed_specs()]
+        assert "list_functions" not in names and "deploy_function" not in names
+        out = toolset.execute("deploy_function", {"slug": "x", "body": "y"})
+        assert "not supported" in out["error"]
+
+    def _fn_toolset(self, project, level="plan", turn=None):
+        """A toolset whose adapter fakes the functions capability."""
+
+        class FakeFnAdapter:
+            capabilities = frozenset({"functions"})
+
+            def __init__(self):
+                self.deployed = {"greet": "Deno.serve(() => new Response('v1'))"}
+
+            def list_functions(self):
+                return [{"slug": s, "status": "ACTIVE", "version": 1} for s in self.deployed]
+
+            def get_function_body(self, slug):
+                if slug not in self.deployed:
+                    raise Exception(f"no function {slug}")
+                return self.deployed[slug]
+
+            def deploy_function(self, slug, body, *, name="", verify_jwt=True):
+                updated = slug in self.deployed
+                self.deployed[slug] = body
+                return {"slug": slug, "version": 2, "updated": updated}
+
+            def delete_function(self, slug):
+                self.deployed.pop(slug, None)
+                return {"slug": slug, "deleted": True}
+
+        return BoundToolset(
+            adapter=FakeFnAdapter(), policy=AutonomyPolicy(level), project=project, actor="test", turn=turn
+        )
+
+    def test_function_tools_advertised_with_the_capability(self, project):
+        toolset = self._fn_toolset(project)
+        names = [s.name for s in toolset.allowed_specs()]
+        assert {"list_functions", "read_function", "deploy_function", "delete_function"} <= set(names)
+
+    def test_reads_execute_immediately(self, project):
+        toolset = self._fn_toolset(project, turn=make_turn(project))
+        assert toolset.execute("list_functions", {})["functions"][0]["slug"] == "greet"
+        assert "v1" in toolset.execute("read_function", {"slug": "greet"})["body"]
+
+    def test_deploy_is_queued_with_a_diff_against_the_live_source(self, project):
+        from agents.models import PlanStep
+
+        toolset = self._fn_toolset(project, turn=make_turn(project))
+        new_body = "Deno.serve(() => new Response('v2'))"
+        out = toolset.execute("deploy_function", {"slug": "greet", "body": new_body})
+        assert out["planned"]["step"] == 1
+        step = PlanStep.objects.get()
+        assert step.meta["updates_existing"] is True
+        assert "-Deno.serve(() => new Response('v1'))" in step.meta["diff"]
+        assert "+Deno.serve(() => new Response('v2'))" in step.meta["diff"]
+        # nothing deployed yet
+        assert toolset.adapter.deployed["greet"].endswith("'v1'))")
+
+    def test_new_function_has_no_diff_but_flags_it(self, project):
+        from agents.models import PlanStep
+
+        toolset = self._fn_toolset(project, turn=make_turn(project))
+        toolset.execute("deploy_function", {"slug": "fresh", "body": "code"})
+        step = PlanStep.objects.get()
+        assert step.meta == {"updates_existing": False, "diff": ""}
+
+    def test_apply_dispatches_function_steps(self, project):
+        """The generic apply executes any queued tool, not just SQL."""
+        from agents.models import Plan, PlanStep
+        from agents.runtime import _apply
+
+        turn = make_turn(project)
+        plan = Plan.objects.create(project=project, turn=turn, status="applying")
+        PlanStep.objects.create(
+            plan=plan,
+            order=1,
+            tool="deploy_function",
+            payload={"slug": "greet", "body": "new code"},
+        )
+        fn_toolset = self._fn_toolset(project, level="full")
+        with (
+            mock.patch("agents.runtime.BoundToolset", return_value=fn_toolset),
+            mock.patch("agents.runtime.AuditedAdapter"),
+            mock.patch("agents.runtime.get_adapter"),
+            mock.patch("agents.runtime.start_turn", return_value=make_turn(project)),
+        ):
+            _apply(plan, "francesco")
+        plan.refresh_from_db()
+        assert plan.status == "applied"
+        step = plan.steps.get()
+        assert step.status == "applied" and step.output["updated"] is True
+        assert fn_toolset.adapter.deployed["greet"] == "new code"
+
+    def test_functions_prompt_only_for_capable_adapters(self, project):
+        from agents.prompts import build_system_prompt
+
+        assert "Edge functions" not in build_system_prompt(project)  # sqlite
+        project.server.adapter_type = "supabase"
+        assert "Edge functions" in build_system_prompt(project)
