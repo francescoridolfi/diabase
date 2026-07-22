@@ -222,16 +222,20 @@ class BoundToolset:
             if name == "list_functions":
                 return {"functions": self.adapter.list_functions()}
             if name == "read_function":
-                return {"slug": payload["slug"], "body": self.adapter.get_function_body(payload["slug"])}
+                return self._read_function(payload["slug"])
             if name == "deploy_function":
-                return self.adapter.deploy_function(
+                out = self.adapter.deploy_function(
                     payload["slug"],
                     payload["body"],
                     name=payload.get("name") or "",
                     verify_jwt=payload.get("verify_jwt", True),
                 )
+                self._track_deploy(payload, out)
+                return out
             if name == "delete_function":
-                return self.adapter.delete_function(payload["slug"])
+                out = self.adapter.delete_function(payload["slug"])
+                self._untrack(payload["slug"])
+                return out
             if name == "read_context_file":
                 return self._read_context_file(
                     payload["name"], payload.get("offset") or 1, payload.get("limit") or READ_DEFAULT_LIMIT
@@ -282,22 +286,80 @@ class BoundToolset:
             ),
         }
 
+    def _tracked_source(self, slug: str):
+        """The locally kept source (EdgeFunctionSource), if any."""
+        from instances.services import get_function_source
+
+        if self.project is None:
+            return None
+        return get_function_source(self.project.server, slug)
+
+    def _read_function(self, slug: str) -> dict:
+        """Local-first: Diabase keeps the source of every function it
+        deployed. Untracked functions (deployed outside Diabase) fall
+        back to the API body — readable only for legacy deployments."""
+        src = self._tracked_source(slug)
+        if src is not None:
+            return {
+                "slug": slug,
+                "body": src.body,
+                "tracked": True,
+                "deployed_version": src.deployed_version,
+                "note": (
+                    "Source tracked by Diabase at version "
+                    f"{src.deployed_version} — compare with list_functions to spot deploys "
+                    "made outside Diabase."
+                ),
+            }
+        return {
+            "slug": slug,
+            "body": self.adapter.get_function_body(slug),
+            "tracked": False,
+            "note": "This function was deployed outside Diabase: source read from the API.",
+        }
+
+    def _track_deploy(self, payload: dict, out: dict):
+        from instances.services import save_function_source
+
+        if self.project is None or "error" in out:
+            return
+        save_function_source(
+            self.project.server,
+            payload["slug"],
+            payload["body"],
+            name=payload.get("name") or "",
+            verify_jwt=payload.get("verify_jwt", True),
+            version=out.get("version"),
+            actor=self.actor,
+        )
+
+    def _untrack(self, slug: str):
+        from instances.services import delete_function_source
+
+        if self.project is not None:
+            delete_function_source(self.project.server, slug)
+
     def _step_review_meta(self, spec: ToolSpec, payload: dict) -> dict:
         """Review context captured at QUEUE time, so the card shows what
         the decision is really about. For deploy_function: a unified diff
-        against the live source (the fetch is an audited read)."""
+        against the source we track locally (or the API body for legacy
+        deployments)."""
         if spec.name != "deploy_function":
             return {}
         import difflib
 
         slug = str(payload.get("slug") or "")
         proposed = str(payload.get("body") or "")
-        try:
-            current = self.adapter.get_function_body(slug)
-            exists = True
-        except Exception:  # new function, bundle-deployed, or API hiccup
-            current = ""
-            exists = False
+        src = self._tracked_source(slug)
+        if src is not None:
+            current, exists = src.body, True
+        else:
+            try:
+                current = self.adapter.get_function_body(slug)
+                exists = True
+            except Exception:  # new function, bundle-deployed, or API hiccup
+                current = ""
+                exists = False
         diff = "\n".join(
             difflib.unified_diff(
                 current.splitlines(),

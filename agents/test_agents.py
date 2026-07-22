@@ -814,3 +814,51 @@ class TestFunctionTools:
         assert "Edge functions" not in build_system_prompt(project)  # sqlite
         project.server.adapter_type = "supabase"
         assert "Edge functions" in build_system_prompt(project)
+
+
+class TestFunctionSourceTracking:
+    """Local-first sources: Diabase keeps what it deploys and reads from
+    its own copy; drift with the live version is detectable, never hidden."""
+
+    def _toolset(self, project, turn=None):
+        return TestFunctionTools()._fn_toolset(project, level="full", turn=turn)
+
+    def test_successful_deploy_tracks_the_source(self, project):
+        from instances.services import get_function_source
+
+        toolset = self._toolset(project)
+        toolset.execute("deploy_function", {"slug": "greet", "body": "v2 code"})
+        src = get_function_source(project.server, "greet")
+        assert src.body == "v2 code" and src.deployed_version == 2
+        assert src.deployed_by == "test"
+
+    def test_read_function_prefers_the_tracked_copy(self, project):
+        toolset = self._toolset(project)
+        toolset.execute("deploy_function", {"slug": "greet", "body": "tracked source"})
+        out = toolset.execute("read_function", {"slug": "greet"})
+        assert out["tracked"] is True and out["body"] == "tracked source"
+        assert out["deployed_version"] == 2
+
+    def test_untracked_function_falls_back_to_the_api(self, project):
+        toolset = self._toolset(project)
+        out = toolset.execute("read_function", {"slug": "greet"})  # never deployed via Diabase
+        assert out["tracked"] is False and "v1" in out["body"]
+
+    def test_delete_untracks(self, project):
+        from instances.services import get_function_source
+
+        toolset = self._toolset(project)
+        toolset.execute("deploy_function", {"slug": "greet", "body": "x"})
+        toolset.execute("delete_function", {"slug": "greet"})
+        assert get_function_source(project.server, "greet") is None
+
+    def test_queue_time_diff_reads_the_tracked_copy(self, project):
+        from agents.models import PlanStep
+        from instances.services import save_function_source
+
+        save_function_source(project.server, "greet", "line one\n", version=4)
+        plan_toolset = TestFunctionTools()._fn_toolset(project, turn=make_turn(project))
+        plan_toolset.execute("deploy_function", {"slug": "greet", "body": "line two\n"})
+        step = PlanStep.objects.get()
+        assert step.meta["updates_existing"] is True
+        assert "-line one" in step.meta["diff"] and "+line two" in step.meta["diff"]

@@ -1,3 +1,7 @@
+# vendored third-party assets (Monaco) are committed as-is: never
+# reformatted, never size-capped
+exclude: ^web/static/web/vendor/
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

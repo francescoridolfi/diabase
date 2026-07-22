@@ -38,7 +38,7 @@
 <div class="modal-overlay modal-sm" id="modal-new-project" role="dialog" aria-modal="true" aria-label="New project">
   <div class="panel-header">
     <h2 style="margin:0">New project</h2>
-    <button class="ghost" data-close>Close (Esc)</button>
+    <button class="icon-btn" data-close title="Close (Esc)" aria-label="Close">✕</button>
   </div>
   {% if servers %}
   <form method="post" action="{% url 'project_create' %}" class="stack">{% csrf_token %}

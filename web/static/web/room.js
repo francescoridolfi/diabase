@@ -38,7 +38,7 @@ const timeline = initTimeline({
 });
 
 const functions = (urls.serverCaps || []).includes("functions")
-  ? initFunctions({ listEl: document.getElementById("fn-list"), urls })
+  ? initFunctions({ listEl: document.getElementById("fn-list"), urls, csrf })
   : null;
 
 // each pane can lazy-load when it first becomes visible

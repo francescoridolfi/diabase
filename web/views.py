@@ -162,25 +162,89 @@ def schema_json(request, pk):
 
 
 def functions_json(request, pk):
-    """The instance's edge functions, for the workspace tab."""
+    """The instance's edge functions, annotated with what WE know about
+    each one: tracked (source kept by Diabase) and drift (the live
+    version isn't the one we deployed — someone worked outside)."""
     project = get_object_or_404(Project.objects.select_related("server"), pk=pk)
     server = project.server
     try:
         adapter = get_adapter(server.adapter_type, server.dsn)
-        return JsonResponse({"functions": adapter.list_functions()})
+        functions = adapter.list_functions()
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=502)
+    sources = {s.slug: s for s in server.function_sources.all()}
+    for f in functions:
+        src = sources.get(f["slug"])
+        f["tracked"] = src is not None
+        f["drift"] = bool(
+            src and src.deployed_version is not None and f.get("version") != src.deployed_version
+        )
+    return JsonResponse({"functions": functions})
 
 
-def function_body_json(request, pk, slug):
-    """One function's deployed source, for the read-only viewer."""
+def function_source_json(request, pk, slug):
+    """The locally tracked source for the editor; falls back to the API
+    body for legacy (pre-bundle) deployments made outside Diabase."""
+    from instances.services import get_function_source
+
+    project = get_object_or_404(Project.objects.select_related("server"), pk=pk)
+    server = project.server
+    src = get_function_source(server, slug)
+    if src is not None:
+        return JsonResponse(
+            {
+                "slug": slug,
+                "body": src.body,
+                "tracked": True,
+                "verify_jwt": src.verify_jwt,
+                "deployed_version": src.deployed_version,
+                "deployed_by": src.deployed_by,
+            }
+        )
+    try:
+        adapter = get_adapter(server.adapter_type, server.dsn)
+        return JsonResponse({"slug": slug, "body": adapter.get_function_body(slug), "tracked": False})
+    except Exception as e:
+        return JsonResponse({"error": str(e), "tracked": False}, status=502)
+
+
+@require_POST
+def function_deploy(request, pk, slug):
+    """The user's own deploy (Monaco editor): audited with the user as
+    actor — same gate as an applied plan step — and tracked locally."""
+    from audit.services import AuditedAdapter
+    from instances.services import save_function_source
+
     project = get_object_or_404(Project.objects.select_related("server"), pk=pk)
     server = project.server
     try:
-        adapter = get_adapter(server.adapter_type, server.dsn)
-        return JsonResponse({"slug": slug, "body": adapter.get_function_body(slug)})
+        body = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON body"}, status=400)
+    source = body.get("body") or ""
+    if not source.strip():
+        return JsonResponse({"error": "Empty function source"}, status=400)
+    verify_jwt = bool(body.get("verify_jwt", True))
+    adapter = AuditedAdapter(
+        get_adapter(server.adapter_type, server.dsn),
+        project=project,
+        actor_type="user",
+        actor=_actor(request),
+    )
+    try:
+        out = adapter.deploy_function(slug, source, name=slug, verify_jwt=verify_jwt)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=502)
+    save_function_source(
+        server,
+        slug,
+        source,
+        name=slug,
+        verify_jwt=verify_jwt,
+        version=out.get("version"),
+        actor=_actor(request),
+    )
+    return JsonResponse(out)
 
 
 def audit_partial(request, pk):

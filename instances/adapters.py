@@ -268,10 +268,19 @@ class SupabaseCloudAdapter(BaseAdapter):
 
     capabilities = frozenset({"functions"})
 
-    def _api(self, method: str, path: str, payload: dict | None = None, *, raw: bool = False):
+    def _api(
+        self,
+        method: str,
+        path: str,
+        payload: dict | None = None,
+        *,
+        raw: bool = False,
+        data: bytes | None = None,
+        content_type: str = "application/json",
+    ):
         """One Management API call with auth, backoff and error mapping.
-        `raw=True` returns the response text verbatim (function bodies);
-        otherwise the JSON-decoded value (or None on empty responses)."""
+        `raw=True` returns the response text verbatim; `data`+`content_type`
+        override the JSON body (multipart deploys)."""
         ref = self.ref  # validates the project ref before anything else
         token = os.environ.get("SUPABASE_ACCESS_TOKEN", "").strip()
         if not token:
@@ -282,10 +291,12 @@ class SupabaseCloudAdapter(BaseAdapter):
         while True:
             req = urllib.request.Request(  # noqa: S310 — fixed https host
                 f"{self.API}/projects/{ref}{path}",
-                data=json.dumps(payload).encode() if payload is not None else None,
+                data=data
+                if data is not None
+                else (json.dumps(payload).encode() if payload is not None else None),
                 headers={
                     "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
+                    "Content-Type": content_type,
                     # Cloudflare in front of api.supabase.com rejects urllib's default UA (error 1010)
                     "User-Agent": "diabase/0.1",
                 },
@@ -351,18 +362,34 @@ class SupabaseCloudAdapter(BaseAdapter):
         return body
 
     def deploy_function(self, slug: str, body: str, *, name: str = "", verify_jwt: bool = True):
+        """Deploy through the bundle endpoint (the one the dashboard and
+        CLI understand): Supabase builds the eszip server-side, we ignore
+        the artifact in the response and only surface errors. The SOURCE
+        stays on our side (see instances.models.EdgeFunctionSource)."""
+        import uuid
+
         _check_slug(slug)
-        existing = {f["slug"] for f in self.list_functions()}
-        payload = {"slug": slug, "name": name or slug, "body": body, "verify_jwt": verify_jwt}
-        if slug in existing:
-            result = self._api("PATCH", f"/functions/{slug}", payload)
-        else:
-            result = self._api("POST", "/functions", payload)
+        boundary = uuid.uuid4().hex
+        metadata = json.dumps({"entrypoint_path": "index.ts", "name": name or slug, "verify_jwt": verify_jwt})
+        form = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="metadata"\r\n'
+            f"Content-Type: application/json\r\n\r\n{metadata}\r\n"
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="file"; filename="index.ts"\r\n'
+            f"Content-Type: application/typescript\r\n\r\n{body}\r\n"
+            f"--{boundary}--\r\n"
+        ).encode()
+        result = self._api(
+            "POST",
+            f"/functions/deploy?slug={slug}",
+            data=form,
+            content_type=f"multipart/form-data; boundary={boundary}",
+        )
         return {
             "slug": slug,
             "version": (result or {}).get("version"),
             "status": (result or {}).get("status"),
-            "updated": slug in existing,
         }
 
     def delete_function(self, slug: str):
