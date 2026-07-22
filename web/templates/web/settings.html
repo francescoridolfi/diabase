@@ -37,7 +37,7 @@
 <div class="modal-overlay modal-sm" id="modal-new-connection" role="dialog" aria-modal="true" aria-label="New LLM connection">
   <div class="panel-header">
     <h2 style="margin:0">New LLM connection</h2>
-    <button class="ghost" data-close>Close (Esc)</button>
+    <button class="icon-btn" data-close title="Close (Esc)" aria-label="Close">✕</button>
   </div>
   <form method="post" action="{% url 'connection_create' %}" class="stack">{% csrf_token %}
     <label class="lbl">Name</label>

@@ -179,9 +179,9 @@
       <h2 style="margin:0" id="fn-editor-title">function</h2>
       <span class="editor-meta" id="fn-editor-meta"></span>
     </div>
-    <div style="display:flex; gap:0.5rem; align-items:center">
-      <a class="ghost btn-link" id="fn-editor-open" href="#" target="_blank" rel="noopener">Open in Supabase ↗</a>
-      <button class="ghost" data-close>Close (Esc)</button>
+    <div class="hdr-actions">
+      <a class="btn-link" id="fn-editor-open" href="#" target="_blank" rel="noopener">Open in Supabase ↗</a>
+      <button class="icon-btn" data-close title="Close (Esc)" aria-label="Close">✕</button>
     </div>
   </div>
   <p class="fn-drift" id="fn-editor-drift" hidden>⚠ The live version differs from the one Diabase deployed — someone worked outside. Deploying will overwrite it.</p>
@@ -199,7 +199,7 @@
       <h2 style="margin:0" id="editor-title">Edit</h2>
       <span class="editor-meta" id="editor-meta"></span>
     </div>
-    <button class="ghost" data-close>Close (Esc)</button>
+    <button class="icon-btn" data-close title="Close (Esc)" aria-label="Close">✕</button>
   </div>
   <div class="editor-split">
     <div class="editor-code">
@@ -209,8 +209,10 @@
     <div class="editor-preview msg assistant" id="editor-preview" style="max-width:100%; align-self:stretch"></div>
   </div>
   <div class="editor-footer">
-    <button class="ghost" id="editor-delete" style="color:var(--danger)">Delete file</button>
-    <button id="editor-save">Save</button>
+    <div class="btn-group">
+      <button class="ghost" id="editor-delete" style="color:var(--danger)">Delete file</button>
+      <button id="editor-save">Save</button>
+    </div>
   </div>
 </div>
 

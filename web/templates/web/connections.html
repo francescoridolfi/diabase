@@ -36,7 +36,7 @@
 <div class="modal-overlay modal-sm" id="modal-new-server" role="dialog" aria-modal="true" aria-label="Connect an instance">
   <div class="panel-header">
     <h2 style="margin:0">Connect an instance</h2>
-    <button class="ghost" data-close>Close (Esc)</button>
+    <button class="icon-btn" data-close title="Close (Esc)" aria-label="Close">✕</button>
   </div>
   <form method="post" action="{% url 'server_create' %}" class="stack">{% csrf_token %}
     <label class="lbl">Name</label>
