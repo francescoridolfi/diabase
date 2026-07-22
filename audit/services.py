@@ -102,6 +102,28 @@ class AuditedAdapter:
     def query_sql(self, sql: str):
         return self._call("query_sql", {"sql": sql}, lambda: self._adapter.query_sql(sql))
 
+    @property
+    def capabilities(self):
+        return self._adapter.capabilities
+
+    def list_functions(self):
+        return self._call("list_functions", {}, self._adapter.list_functions)
+
+    def get_function_body(self, slug: str):
+        return self._call("read_function", {"slug": slug}, lambda: self._adapter.get_function_body(slug))
+
+    def deploy_function(self, slug: str, body: str, *, name: str = "", verify_jwt: bool = True):
+        # the full body rides in the audit payload: the trail must show
+        # exactly what code went live, not a summary of it
+        return self._call(
+            "deploy_function",
+            {"slug": slug, "name": name or slug, "verify_jwt": verify_jwt, "body": body},
+            lambda: self._adapter.deploy_function(slug, body, name=name, verify_jwt=verify_jwt),
+        )
+
+    def delete_function(self, slug: str):
+        return self._call("delete_function", {"slug": slug}, lambda: self._adapter.delete_function(slug))
+
     def get_schema(self):
         # composed of audited calls: each underlying list/describe is recorded
         return {t: self.describe_table(t) for t in self.list_tables()}

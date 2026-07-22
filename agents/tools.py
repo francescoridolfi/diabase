@@ -26,6 +26,9 @@ class ToolSpec:
     description: str
     input_schema: dict
     risk: Risk
+    # tools bound to an adapter capability ("functions", …) are only
+    # advertised — and executable — when the instance supports it
+    capability: str | None = None
 
 
 TOOLS: list[ToolSpec] = [
@@ -68,6 +71,54 @@ TOOLS: list[ToolSpec] = [
             "required": ["sql"],
         },
         risk=Risk.WRITE,
+    ),
+    ToolSpec(
+        name="list_functions",
+        description="List the project's edge functions (slug, status, version, last update).",
+        input_schema={"type": "object", "properties": {}, "required": []},
+        risk=Risk.READ,
+        capability="functions",
+    ),
+    ToolSpec(
+        name="read_function",
+        description="Read the deployed source of an edge function.",
+        input_schema={
+            "type": "object",
+            "properties": {"slug": {"type": "string", "description": "The function slug."}},
+            "required": ["slug"],
+        },
+        risk=Risk.READ,
+        capability="functions",
+    ),
+    ToolSpec(
+        name="deploy_function",
+        description=(
+            "Create or update an edge function with the given TypeScript source (single file, "
+            "Deno runtime). Read the current source first when updating — the user reviews a diff."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "slug": {"type": "string", "description": "Function slug (letters, digits, - _)."},
+                "body": {"type": "string", "description": "The complete function source."},
+                "name": {"type": "string", "description": "Display name (defaults to the slug)."},
+                "verify_jwt": {"type": "boolean", "description": "Require a valid JWT (default true)."},
+            },
+            "required": ["slug", "body"],
+        },
+        risk=Risk.WRITE,
+        capability="functions",
+    ),
+    ToolSpec(
+        name="delete_function",
+        description="Delete an edge function.",
+        input_schema={
+            "type": "object",
+            "properties": {"slug": {"type": "string", "description": "The function slug."}},
+            "required": ["slug"],
+        },
+        risk=Risk.WRITE,
+        capability="functions",
     ),
     ToolSpec(
         name="read_context_file",
@@ -139,15 +190,21 @@ class BoundToolset:
         self.actor = actor
         self.turn = turn  # the running Turn: where queued plan steps attach
 
+    def _supported(self, spec: ToolSpec) -> bool:
+        return spec.capability is None or spec.capability in getattr(self.adapter, "capabilities", ())
+
     def allowed_specs(self) -> list[ToolSpec]:
-        """The specs this policy level exposes at all (denied tools are
-        not even advertised to the model)."""
-        return [s for s in self.specs if self.policy.allows(s)]
+        """The specs this policy level exposes at all: denied tools are
+        not even advertised to the model, and neither are tools whose
+        capability the instance doesn't have."""
+        return [s for s in self.specs if self._supported(s) and self.policy.allows(s)]
 
     def execute(self, name: str, payload: dict) -> dict:
         spec = next((s for s in self.specs if s.name == name), None)
         if spec is None:
             return {"error": f"Unknown tool: {name!r}"}
+        if not self._supported(spec):
+            return {"error": f"Tool {name!r} is not supported by this instance ({spec.capability})"}
         decision = self.policy.check(spec)
         if not decision.allowed:
             raise ToolDenied(decision.reason)
@@ -162,6 +219,19 @@ class BoundToolset:
                 return self.adapter.query_sql(payload["sql"])
             if name == "execute_sql":
                 return self.adapter.execute_sql(payload["sql"])
+            if name == "list_functions":
+                return {"functions": self.adapter.list_functions()}
+            if name == "read_function":
+                return {"slug": payload["slug"], "body": self.adapter.get_function_body(payload["slug"])}
+            if name == "deploy_function":
+                return self.adapter.deploy_function(
+                    payload["slug"],
+                    payload["body"],
+                    name=payload.get("name") or "",
+                    verify_jwt=payload.get("verify_jwt", True),
+                )
+            if name == "delete_function":
+                return self.adapter.delete_function(payload["slug"])
             if name == "read_context_file":
                 return self._read_context_file(
                     payload["name"], payload.get("offset") or 1, payload.get("limit") or READ_DEFAULT_LIMIT
@@ -190,7 +260,11 @@ class BoundToolset:
             turn=self.turn, status="draft", defaults={"project": self.project}
         )
         step = PlanStep.objects.create(
-            plan=plan, order=plan.steps.count() + 1, tool=spec.name, payload=payload
+            plan=plan,
+            order=plan.steps.count() + 1,
+            tool=spec.name,
+            payload=payload,
+            meta=self._step_review_meta(spec, payload),
         )
         record(
             action="plan.step_queued",
@@ -207,6 +281,33 @@ class BoundToolset:
                 "Queue any further writes, then summarize the plan for the user."
             ),
         }
+
+    def _step_review_meta(self, spec: ToolSpec, payload: dict) -> dict:
+        """Review context captured at QUEUE time, so the card shows what
+        the decision is really about. For deploy_function: a unified diff
+        against the live source (the fetch is an audited read)."""
+        if spec.name != "deploy_function":
+            return {}
+        import difflib
+
+        slug = str(payload.get("slug") or "")
+        proposed = str(payload.get("body") or "")
+        try:
+            current = self.adapter.get_function_body(slug)
+            exists = True
+        except Exception:  # new function, bundle-deployed, or API hiccup
+            current = ""
+            exists = False
+        diff = "\n".join(
+            difflib.unified_diff(
+                current.splitlines(),
+                proposed.splitlines(),
+                fromfile=f"{slug} (live)",
+                tofile=f"{slug} (proposed)",
+                lineterm="",
+            )
+        )
+        return {"updates_existing": exists, "diff": diff if exists else ""}
 
     def _read_context_file(self, file_name: str, offset: int, limit: int) -> dict:
         """Context files live in Diabase's own DB, not behind the adapter,

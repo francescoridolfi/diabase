@@ -126,11 +126,16 @@ def project_room(request, pk):
     active_plan = project.plans.filter(
         status__in=["proposed", "applying"], turn__conversation=selected
     ).first()
+    from instances.adapters import ADAPTERS
+
+    adapter_cls = ADAPTERS.get(project.server.adapter_type)
+    server_caps = sorted(adapter_cls.capabilities) if adapter_cls else []
     return render(
         request,
         "web/project.html",
         {
             "project": project,
+            "server_caps": server_caps,
             "conversations": conversations,
             "conversation": selected,
             "chat": selected.messages.all(),
@@ -152,6 +157,28 @@ def schema_json(request, pk):
     try:
         schema = get_adapter(server.adapter_type, server.dsn).get_schema()
         return JsonResponse({"schema": schema})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=502)
+
+
+def functions_json(request, pk):
+    """The instance's edge functions, for the workspace tab."""
+    project = get_object_or_404(Project.objects.select_related("server"), pk=pk)
+    server = project.server
+    try:
+        adapter = get_adapter(server.adapter_type, server.dsn)
+        return JsonResponse({"functions": adapter.list_functions()})
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=502)
+
+
+def function_body_json(request, pk, slug):
+    """One function's deployed source, for the read-only viewer."""
+    project = get_object_or_404(Project.objects.select_related("server"), pk=pk)
+    server = project.server
+    try:
+        adapter = get_adapter(server.adapter_type, server.dsn)
+        return JsonResponse({"slug": slug, "body": adapter.get_function_body(slug)})
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=502)
 
@@ -399,7 +426,14 @@ def _plan_payload(plan) -> dict:
         "error": plan.error,
         "continuation_turn_id": plan.continuation_turn_id,
         "steps": [
-            {"order": s.order, "tool": s.tool, "payload": s.payload, "status": s.status, "output": s.output}
+            {
+                "order": s.order,
+                "tool": s.tool,
+                "payload": s.payload,
+                "status": s.status,
+                "output": s.output,
+                "meta": s.meta,
+            }
             for s in plan.steps.all()
         ],
     }

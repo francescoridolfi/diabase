@@ -132,6 +132,10 @@ class PlanStep(models.Model):
     payload = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=10, choices=STATUSES, default="pending")
     output = models.JSONField(default=dict, blank=True)
+    # derived review context computed at queue time, e.g. the unified diff
+    # of a deploy_function step against the live source — what the user
+    # actually decides on
+    meta = models.JSONField(default=dict, blank=True)
 
     class Meta:
         ordering = ["order"]

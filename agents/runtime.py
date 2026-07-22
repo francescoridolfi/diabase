@@ -333,25 +333,28 @@ def _decide(plan, status: str, action: str, user: str):
 
 
 def _apply(plan, user: str):
-    """Execute the approved steps in order; stop at the first failure."""
+    """Execute the approved steps in order; stop at the first failure.
+
+    Steps run through a full-policy BoundToolset over a USER-attributed
+    audited adapter: any write tool a plan can queue (SQL, function
+    deploys, …) applies through the same single gate, and the trail
+    shows who authorized each one."""
     project = plan.project
     server = project.server
     adapter = AuditedAdapter(
         get_adapter(server.adapter_type, server.dsn), project=project, actor_type="user", actor=user
     )
+    toolset = BoundToolset(adapter=adapter, policy=AutonomyPolicy("full"), project=project, actor=user)
     failed = False
     for step in plan.steps.order_by("order"):
         if failed:
             step.status = "skipped"
             step.save(update_fields=["status"])
             continue
-        if step.tool == "execute_sql":
-            try:
-                output = adapter.execute_sql(step.payload.get("sql", ""))
-            except Exception as e:
-                output = {"error": f"{type(e).__name__}: {e}"}
-        else:
-            output = {"error": f"Plan step has no executor for tool {step.tool!r}"}
+        try:
+            output = toolset.execute(step.tool, step.payload)
+        except Exception as e:
+            output = {"error": f"{type(e).__name__}: {e}"}
         step.output = output if isinstance(output, dict) else {"result": output}
         step.status = "failed" if "error" in step.output else "applied"
         step.save(update_fields=["status", "output"])

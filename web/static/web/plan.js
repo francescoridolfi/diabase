@@ -27,17 +27,43 @@ export function initPlan({ log, chat, orb, timeline, urls, csrf }) {
     return el;
   }
 
+  /* unified diff → colored lines: what the user actually decides on */
+  function renderDiff(diff) {
+    const lines = diff
+      .split("\n")
+      .map((l) => {
+        const cls = l.startsWith("+") ? "diff-add" : l.startsWith("-") ? "diff-del" : l.startsWith("@@") ? "diff-hunk" : "";
+        return `<span class="${cls}">${esc(l) || " "}</span>`;
+      })
+      .join("\n");
+    return `<pre class="diff"><code>${lines}</code></pre>`;
+  }
+
+  function stepBody(s) {
+    if (s.payload && s.payload.sql) return `<pre><code>${esc(s.payload.sql)}</code></pre>`;
+    if (s.tool === "deploy_function") {
+      if (s.meta && s.meta.diff) return renderDiff(s.meta.diff); // update: review the change
+      if (s.payload && s.payload.body) return `<pre><code>${esc(s.payload.body)}</code></pre>`; // new: review it all
+    }
+    return "";
+  }
+
+  function stepLabel(s) {
+    const target = s.payload && s.payload.slug ? ` <b>${esc(s.payload.slug)}</b>` : "";
+    const fresh = s.tool === "deploy_function" && s.meta && !s.meta.updates_existing ? " (new)" : "";
+    return `Step ${s.order} · ${esc(s.tool)}${target}${fresh}`;
+  }
+
   function renderPlanCard(plan) {
     const stick = chat.nearBottom();
     const el = planCardEl(plan.id);
     el.dataset.status = plan.status;
     const steps = plan.steps
       .map((s) => {
-        const sql = s.payload && s.payload.sql ? `<pre><code>${esc(s.payload.sql)}</code></pre>` : "";
         const err = s.output && s.output.error ? `<div class="step-err">${esc(String(s.output.error))}</div>` : "";
         return `<div class="plan-step" data-status="${s.status}">
           <span class="step-mark">${STEP_ICONS[s.status] || "○"}</span>
-          <div class="step-body"><span class="step-title">Step ${s.order} · ${esc(s.tool)}</span>${sql}${err}</div>
+          <div class="step-body"><span class="step-title">${stepLabel(s)}</span>${stepBody(s)}${err}</div>
         </div>`;
       })
       .join("");

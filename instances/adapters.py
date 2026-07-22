@@ -21,6 +21,11 @@ class AdapterError(Exception):
 
 
 class BaseAdapter:
+    # optional surfaces beyond the database itself ("functions", later
+    # "storage", "auth"): tools bound to a capability are only advertised
+    # to the agent — and rendered in the GUI — when the adapter has it
+    capabilities: frozenset[str] = frozenset()
+
     def __init__(self, dsn: str):
         self.dsn = dsn
 
@@ -50,6 +55,15 @@ _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 def _check_identifier(name: str):
     if not _IDENT_RE.match(name):
         raise AdapterError(f"Invalid table name: {name!r}")
+
+
+_SLUG_RE = re.compile(r"^[A-Za-z0-9_-]{1,63}$")
+
+
+def _check_slug(slug: str):
+    """Function slugs end up in API paths: keep them boring."""
+    if not _SLUG_RE.match(slug or ""):
+        raise AdapterError(f"Invalid function slug: {slug!r}")
 
 
 def _single_statement(sql: str) -> str:
@@ -252,7 +266,12 @@ class SupabaseCloudAdapter(BaseAdapter):
 
     MAX_429_RETRIES = 2
 
-    def _query(self, sql: str):
+    capabilities = frozenset({"functions"})
+
+    def _api(self, method: str, path: str, payload: dict | None = None, *, raw: bool = False):
+        """One Management API call with auth, backoff and error mapping.
+        `raw=True` returns the response text verbatim (function bodies);
+        otherwise the JSON-decoded value (or None on empty responses)."""
         ref = self.ref  # validates the project ref before anything else
         token = os.environ.get("SUPABASE_ACCESS_TOKEN", "").strip()
         if not token:
@@ -262,15 +281,15 @@ class SupabaseCloudAdapter(BaseAdapter):
         attempts = 0
         while True:
             req = urllib.request.Request(  # noqa: S310 — fixed https host
-                f"{self.API}/projects/{ref}/database/query",
-                data=json.dumps({"query": sql}).encode(),
+                f"{self.API}/projects/{ref}{path}",
+                data=json.dumps(payload).encode() if payload is not None else None,
                 headers={
                     "Authorization": f"Bearer {token}",
                     "Content-Type": "application/json",
                     # Cloudflare in front of api.supabase.com rejects urllib's default UA (error 1010)
                     "User-Agent": "diabase/0.1",
                 },
-                method="POST",
+                method=method,
             )
             try:
                 with urllib.request.urlopen(req, timeout=30) as resp:  # noqa: S310 # nosec B310 — fixed https host
@@ -295,10 +314,61 @@ class SupabaseCloudAdapter(BaseAdapter):
                 raise AdapterError(f"Supabase API {e.code}: {detail}") from None
             except urllib.error.URLError as e:
                 raise AdapterError(f"Supabase API unreachable: {e.reason}") from None
-        result = json.loads(body) if body else []
+        if raw:
+            return body
+        return json.loads(body) if body else None
+
+    def _query(self, sql: str):
+        result = self._api("POST", "/database/query", {"query": sql})
         if isinstance(result, dict):  # some API versions wrap results in {"result": [...]}
             result = result.get("result", result)
         return result if isinstance(result, list) else []
+
+    # ---------- edge functions (capability "functions") ----------
+
+    def list_functions(self):
+        rows = self._api("GET", "/functions") or []
+        return [
+            {
+                "slug": f.get("slug"),
+                "name": f.get("name"),
+                "status": f.get("status"),
+                "version": f.get("version"),
+                "verify_jwt": f.get("verify_jwt"),
+                "updated_at": f.get("updated_at"),
+            }
+            for f in rows
+        ]
+
+    def get_function_body(self, slug: str) -> str:
+        _check_slug(slug)
+        body = self._api("GET", f"/functions/{slug}/body", raw=True)
+        # bundled deployments (eszip) are not human-readable source
+        if body.lstrip()[:4] in ("ESZP", "eszp") or "\x00" in body[:200]:
+            raise AdapterError(
+                f"Function {slug!r} was deployed as a bundle: its source is not readable via the API"
+            )
+        return body
+
+    def deploy_function(self, slug: str, body: str, *, name: str = "", verify_jwt: bool = True):
+        _check_slug(slug)
+        existing = {f["slug"] for f in self.list_functions()}
+        payload = {"slug": slug, "name": name or slug, "body": body, "verify_jwt": verify_jwt}
+        if slug in existing:
+            result = self._api("PATCH", f"/functions/{slug}", payload)
+        else:
+            result = self._api("POST", "/functions", payload)
+        return {
+            "slug": slug,
+            "version": (result or {}).get("version"),
+            "status": (result or {}).get("status"),
+            "updated": slug in existing,
+        }
+
+    def delete_function(self, slug: str):
+        _check_slug(slug)
+        self._api("DELETE", f"/functions/{slug}")
+        return {"slug": slug, "deleted": True}
 
     def list_tables(self):
         rows = self._query(

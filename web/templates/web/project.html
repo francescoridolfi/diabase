@@ -51,6 +51,7 @@
     <nav class="m-tabs" id="m-tabs" aria-label="Sections">
       <button class="mt active" data-view="chat">Chat</button>
       <button class="mt" data-view="pane-schema">Schema</button>
+      {% if "functions" in server_caps %}<button class="mt" data-view="pane-functions">Fn</button>{% endif %}
       <button class="mt" data-view="pane-audit">Audit</button>
       <button class="mt" data-view="pane-context">Context</button>
       <button class="mt" data-view="pane-settings">Settings</button>
@@ -70,6 +71,7 @@
   <aside class="workspace" id="workspace" aria-label="Workspace">
     <nav class="tabs" role="tablist">
       <button class="tab active" role="tab" data-pane="pane-schema">Schema</button>
+      {% if "functions" in server_caps %}<button class="tab" role="tab" data-pane="pane-functions">Functions</button>{% endif %}
       <button class="tab" role="tab" data-pane="pane-audit">Audit</button>
       <button class="tab" role="tab" data-pane="pane-context">Context</button>
       <button class="tab" role="tab" data-pane="pane-settings">Settings</button>
@@ -88,6 +90,13 @@
         </div>
       </div>
     </div>
+
+    {% if "functions" in server_caps %}
+    <div class="pane" id="pane-functions" role="tabpanel" hidden>
+      <h2 class="pane-label">Edge functions <span class="dim-note">— deploys happen through plans; manual editing lives in Supabase</span></h2>
+      <div id="fn-list"><p class="dim-note">Loading…</p></div>
+    </div>
+    {% endif %}
 
     <div class="pane" id="pane-audit" role="tabpanel" hidden>
       <h2 class="pane-label">Live</h2>
@@ -163,6 +172,22 @@
   </aside>
 </div>
 
+{% if "functions" in server_caps %}
+<div class="modal-overlay" id="fn-viewer" role="dialog" aria-modal="true" aria-label="Function source">
+  <div class="panel-header">
+    <div style="display:flex; align-items:baseline; gap:0.8rem; min-width:0">
+      <h2 style="margin:0" id="fn-viewer-title">function</h2>
+      <span class="editor-meta" id="fn-viewer-meta"></span>
+    </div>
+    <div style="display:flex; gap:0.5rem; align-items:center">
+      <a class="ghost btn-link" id="fn-viewer-open" href="#" target="_blank" rel="noopener">Open in Supabase ↗</a>
+      <button class="ghost" data-close>Close (Esc)</button>
+    </div>
+  </div>
+  <pre class="fn-source"><code id="fn-viewer-body"></code></pre>
+</div>
+{% endif %}
+
 <div class="modal-overlay" id="editor-overlay" role="dialog" aria-modal="true" aria-label="Context editor">
   <div class="panel-header">
     <div style="display:flex; align-items:baseline; gap:0.8rem; min-width:0">
@@ -192,6 +217,9 @@
     turnStreamBase: "{% url 'turn_stream' project.pk 0 %}".replace(/0\/stream\/$/, ""),
     planBase: "{% url 'plan_json' project.pk 0 %}".replace(/0\/$/, ""),
     schemaUrl: "{% url 'schema_json' project.pk %}",
+    serverCaps: {{ server_caps|default:"[]"|safe }},
+    functionsUrl: "{% url 'functions_json' project.pk %}",
+    {% if project.server.adapter_type == "supabase" %}supabaseDashboard: "https://supabase.com/dashboard/project/{{ project.server.dsn }}",{% endif %}
     auditUrl: "{% url 'audit_partial' project.pk %}",
     auditLogUrl: "{% url 'audit_log' project.pk %}",
     contextFileSaveUrl: "{% url 'context_file_save' project.pk %}",

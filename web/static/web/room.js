@@ -10,6 +10,7 @@ import { initTimeline } from "./timeline.js";
 import { initChat } from "./chat.js";
 import { initPlan } from "./plan.js";
 import { initContext } from "./context.js";
+import { initFunctions } from "./functions.js";
 import { initParticles } from "./particles.js";
 
 const urls = window.DIABASE;
@@ -36,17 +37,23 @@ const timeline = initTimeline({
   logUrl: urls.auditLogUrl,
 });
 
+const functions = (urls.serverCaps || []).includes("functions")
+  ? initFunctions({ listEl: document.getElementById("fn-list"), urls })
+  : null;
+
+// each pane can lazy-load when it first becomes visible
+const paneHooks = {
+  "pane-schema": () => schema.shown(),
+  "pane-audit": () => timeline.ensureLogLoaded(),
+  "pane-functions": () => functions?.shown(),
+};
 const workspace = initWorkspace({
   shellEl: document.getElementById("room-shell"),
   workspaceEl: document.getElementById("workspace"),
   orbEl: document.getElementById("orb"),
   mTabsEl: document.getElementById("m-tabs"),
-  onSchemaShown: () => schema.shown(),
+  onPaneShown: (paneId) => paneHooks[paneId]?.(),
 });
-
-// the audit pane loads its full log the first time it opens
-document.querySelector('[data-pane="pane-audit"]').addEventListener("click", () => timeline.ensureLogLoaded());
-document.querySelector('[data-view="pane-audit"]').addEventListener("click", () => timeline.ensureLogLoaded());
 
 const chat = initChat({
   log: document.getElementById("chatlog"),
@@ -59,7 +66,8 @@ const chat = initChat({
     onToolEvent: () => timeline.refreshSoon(),
     onTurnSettled: () => {
       timeline.refresh();
-      schema.refreshIfVisible(workspace.schemaVisible());
+      schema.refreshIfVisible(workspace.paneVisible("pane-schema"));
+      functions?.refreshIfVisible(workspace.paneVisible("pane-functions"));
     },
     onPlanProposed: (planId) => plan.loadPlanCard(planId),
   },

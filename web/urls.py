@@ -27,6 +27,10 @@ urlpatterns = [
     path("projects/<int:pk>/plans/<int:plan_id>/reject/", views.plan_reject, name="plan_reject"),
     path("projects/<int:pk>/plans/<int:plan_id>/revise/", views.plan_revise, name="plan_revise"),
     path("projects/<int:pk>/schema/", views.schema_json, name="schema_json"),
+    path("projects/<int:pk>/functions/", views.functions_json, name="functions_json"),
+    path(
+        "projects/<int:pk>/functions/<slug:slug>/body/", views.function_body_json, name="function_body_json"
+    ),
     path("projects/<int:pk>/audit/", views.audit_partial, name="audit_partial"),
     path("projects/<int:pk>/audit/log/", views.audit_log, name="audit_log"),
     path("projects/<int:pk>/settings/", views.project_update, name="project_update"),
