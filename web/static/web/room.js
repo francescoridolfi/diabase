@@ -10,6 +10,7 @@ import { initTimeline } from "./timeline.js";
 import { initChat } from "./chat.js";
 import { initPlan } from "./plan.js";
 import { initContext } from "./context.js";
+import { initParticles } from "./particles.js";
 
 const urls = window.DIABASE;
 const csrf = () => urls.csrfToken || document.querySelector("[name=csrfmiddlewaretoken]").value;
@@ -68,6 +69,26 @@ const plan = initPlan({ log: document.getElementById("chatlog"), chat, orb, time
 
 initContext({ chat, urls, csrf });
 // the sidebar drawer is handled globally by shell.js
+
+// sparks on both orbits: the workspace frame and the mini orb — the same
+// swarm at two scales, both hurrying while the agent works
+const workspaceEl = document.getElementById("workspace");
+initParticles({
+  el: workspaceEl,
+  shape: "rect",
+  isWorking: () => workspaceEl.classList.contains("working"),
+});
+const orbEl = document.getElementById("orb");
+initParticles({
+  el: orbEl,
+  shape: "circle",
+  count: 10,
+  margin: 8,
+  sizeRange: [0.5, 1.4],
+  wobbleRange: [0.8, 2.5],
+  idleSpeed: 14,
+  isWorking: () => ["thinking", "tool", "write"].includes(orbEl.dataset.state),
+});
 
 // a turn already running when this page loaded (started before a refresh,
 // or from another tab) — reconnect from the beginning: every event is
