@@ -1,8 +1,13 @@
+from django.contrib.auth import views as auth_views
 from django.urls import path
 
 from . import views
+from .auth import ForcedPasswordChangeView
 
 urlpatterns = [
+    path("login/", auth_views.LoginView.as_view(template_name="web/login.html"), name="login"),
+    path("logout/", auth_views.LogoutView.as_view(), name="logout"),
+    path("password/", ForcedPasswordChangeView.as_view(), name="password_change"),
     path("", views.home, name="home"),
     path("connections/", views.connections, name="connections"),
     path("settings/", views.settings_page, name="settings"),

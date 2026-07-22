@@ -37,9 +37,17 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # every view requires login unless explicitly exempted (the auth views are)
+    "django.contrib.auth.middleware.LoginRequiredMiddleware",
+    # factory-password users can only reach the password-change form
+    "web.auth.ForcePasswordChangeMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
+
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "home"
+LOGOUT_REDIRECT_URL = "login"
 
 ROOT_URLCONF = "diabase.urls"
 
