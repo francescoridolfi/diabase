@@ -642,6 +642,50 @@ class TestFunctionsViews:
         assert b"pane-functions" in r.content
         assert b'id="fn-editor"' in r.content
 
+    def test_storage_json_enriches_buckets_with_the_read_only_query(self, client, project):
+        with mock.patch("web.views.get_adapter") as ga:
+            ga.return_value.list_buckets.return_value = [{"id": "avatars", "name": "avatars", "public": True}]
+            ga.return_value.query_sql.return_value = {
+                "rows": [
+                    {
+                        "id": "avatars",
+                        "file_size_limit": "1048576",
+                        "allowed_mime_types": "{image/png}",
+                        "objects": "12",
+                    }
+                ]
+            }
+            r = client.get(reverse("storage_json", args=[project.pk]))
+        b = r.json()["buckets"][0]
+        assert b["objects"] == "12" and b["file_size_limit"] == "1048576"
+        assert b["allowed_mime_types"] == "{image/png}"
+
+    def test_storage_json_survives_a_failing_count_query(self, client, project):
+        with mock.patch("web.views.get_adapter") as ga:
+            ga.return_value.list_buckets.return_value = [
+                {"id": "avatars", "name": "avatars", "public": False}
+            ]
+            ga.return_value.query_sql.side_effect = Exception("boom")
+            r = client.get(reverse("storage_json", args=[project.pk]))
+        assert r.status_code == 200
+        assert r.json()["buckets"][0]["objects"] is None
+
+    def test_storage_json_adapter_errors_become_502(self, client, project):
+        from instances.adapters import AdapterError
+
+        with mock.patch("web.views.get_adapter") as ga:
+            ga.return_value.list_buckets.side_effect = AdapterError("nope")
+            r = client.get(reverse("storage_json", args=[project.pk]))
+        assert r.status_code == 502 and r.json()["error"] == "nope"
+
+    def test_storage_tab_only_for_capable_servers(self, client, project):
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert b"pane-storage" not in r.content  # sqlite project
+        project.server.adapter_type = "supabase"
+        project.server.save()
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert b"pane-storage" in r.content
+
     def test_plan_json_carries_step_meta(self, client, project, proposed_plan):
         step = proposed_plan.steps.get()
         step.meta = {"updates_existing": True, "diff": "-a\n+b"}

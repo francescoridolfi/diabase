@@ -816,6 +816,76 @@ class TestFunctionTools:
         assert "Edge functions" in build_system_prompt(project)
 
 
+class TestStorageTools:
+    """Bucket tools: same capability gating and plan discipline as the
+    function tools — structure through plans, files never."""
+
+    def _storage_toolset(self, project, level="plan", turn=None):
+        class FakeStorageAdapter:
+            capabilities = frozenset({"storage"})
+
+            def __init__(self):
+                self.buckets = {"avatars": {"public": True}}
+
+            def list_buckets(self):
+                return [{"id": b, "name": b, "public": v["public"]} for b, v in self.buckets.items()]
+
+            def create_bucket(self, name, *, public=False, file_size_limit=None, allowed_mime_types=None):
+                self.buckets[name] = {"public": public}
+                return {"name": name, "public": public, "created": True}
+
+            def delete_bucket(self, name):
+                self.buckets.pop(name, None)
+                return {"name": name, "deleted": True}
+
+        return BoundToolset(
+            adapter=FakeStorageAdapter(),
+            policy=AutonomyPolicy(level),
+            project=project,
+            actor="test",
+            turn=turn,
+        )
+
+    def test_storage_tools_hidden_without_the_capability(self, project):
+        toolset = make_toolset(project)  # sqlite adapter: no "storage"
+        names = [s.name for s in toolset.allowed_specs()]
+        assert "list_buckets" not in names and "create_bucket" not in names
+        out = toolset.execute("create_bucket", {"name": "avatars"})
+        assert "not supported" in out["error"]
+
+    def test_storage_tools_advertised_with_the_capability(self, project):
+        names = [s.name for s in self._storage_toolset(project).allowed_specs()]
+        assert {"list_buckets", "create_bucket", "update_bucket", "delete_bucket"} <= set(names)
+
+    def test_list_executes_immediately_at_plan_level(self, project):
+        toolset = self._storage_toolset(project, turn=make_turn(project))
+        assert toolset.execute("list_buckets", {})["buckets"][0]["id"] == "avatars"
+
+    def test_bucket_writes_are_queued_not_executed(self, project):
+        from agents.models import PlanStep
+
+        toolset = self._storage_toolset(project, turn=make_turn(project))
+        out = toolset.execute("create_bucket", {"name": "docs", "public": False})
+        assert out["planned"]["step"] == 1
+        assert "docs" not in toolset.adapter.buckets  # nothing touched the instance
+        step = PlanStep.objects.get()
+        assert step.tool == "create_bucket" and step.payload["name"] == "docs"
+
+    def test_full_autonomy_executes_bucket_writes(self, project):
+        toolset = self._storage_toolset(project, level="full")
+        out = toolset.execute("create_bucket", {"name": "docs"})
+        assert out == {"name": "docs", "public": False, "created": True}
+        assert toolset.execute("delete_bucket", {"name": "docs"}) == {"name": "docs", "deleted": True}
+
+    def test_storage_prompt_only_for_capable_adapters(self, project):
+        from agents.prompts import build_system_prompt
+
+        assert "# Storage" not in build_system_prompt(project)  # sqlite
+        project.server.adapter_type = "supabase"
+        prompt = build_system_prompt(project)
+        assert "# Storage" in prompt and "storage.objects" in prompt
+
+
 class TestFunctionSourceTracking:
     """Local-first sources: Diabase keeps what it deploys and reads from
     its own copy; drift with the live version is detectable, never hidden."""

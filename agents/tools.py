@@ -121,6 +121,79 @@ TOOLS: list[ToolSpec] = [
         capability="functions",
     ),
     ToolSpec(
+        name="list_buckets",
+        description="List the project's storage buckets (name, public flag).",
+        input_schema={"type": "object", "properties": {}, "required": []},
+        risk=Risk.READ,
+        capability="storage",
+    ),
+    ToolSpec(
+        name="create_bucket",
+        description=(
+            "Create a storage bucket. Buckets are private by default; storage POLICIES "
+            "(RLS on storage.objects) are plain SQL — write them with execute_sql."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Bucket name (letters, digits, . _ -)."},
+                "public": {
+                    "type": "boolean",
+                    "description": "Objects readable without auth (default false).",
+                },
+                "file_size_limit": {
+                    "type": "integer",
+                    "description": "Max object size in bytes (omit for none).",
+                },
+                "allowed_mime_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Accepted MIME types (omit for any).",
+                },
+            },
+            "required": ["name"],
+        },
+        risk=Risk.WRITE,
+        capability="storage",
+    ),
+    ToolSpec(
+        name="update_bucket",
+        description=(
+            "Change a bucket's settings: pass only what changes. file_size_limit 0 and "
+            "allowed_mime_types [] clear their restriction."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The bucket to update."},
+                "public": {"type": "boolean", "description": "Objects readable without auth."},
+                "file_size_limit": {
+                    "type": "integer",
+                    "description": "Max object size in bytes (0 clears it).",
+                },
+                "allowed_mime_types": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Accepted MIME types ([] clears the restriction).",
+                },
+            },
+            "required": ["name"],
+        },
+        risk=Risk.WRITE,
+        capability="storage",
+    ),
+    ToolSpec(
+        name="delete_bucket",
+        description="Delete an EMPTY storage bucket (the server rejects non-empty ones).",
+        input_schema={
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "The bucket to delete."}},
+            "required": ["name"],
+        },
+        risk=Risk.WRITE,
+        capability="storage",
+    ),
+    ToolSpec(
         name="read_context_file",
         description=(
             "Read part of a project context file (see the context index in the system prompt). "
@@ -236,6 +309,24 @@ class BoundToolset:
                 out = self.adapter.delete_function(payload["slug"])
                 self._untrack(payload["slug"])
                 return out
+            if name == "list_buckets":
+                return {"buckets": self.adapter.list_buckets()}
+            if name == "create_bucket":
+                return self.adapter.create_bucket(
+                    payload["name"],
+                    public=payload.get("public", False),
+                    file_size_limit=payload.get("file_size_limit"),
+                    allowed_mime_types=payload.get("allowed_mime_types"),
+                )
+            if name == "update_bucket":
+                return self.adapter.update_bucket(
+                    payload["name"],
+                    public=payload.get("public"),
+                    file_size_limit=payload.get("file_size_limit"),
+                    allowed_mime_types=payload.get("allowed_mime_types"),
+                )
+            if name == "delete_bucket":
+                return self.adapter.delete_bucket(payload["name"])
             if name == "read_context_file":
                 return self._read_context_file(
                     payload["name"], payload.get("offset") or 1, payload.get("limit") or READ_DEFAULT_LIMIT

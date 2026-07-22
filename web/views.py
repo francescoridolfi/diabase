@@ -182,6 +182,36 @@ def functions_json(request, pk):
     return JsonResponse({"functions": functions})
 
 
+def storage_json(request, pk):
+    """The instance's buckets, enriched with what the Management API list
+    doesn't carry (size limit, MIME whitelist, object counts) via ONE
+    read-only query on storage.buckets/objects."""
+    project = get_object_or_404(Project.objects.select_related("server"), pk=pk)
+    server = project.server
+    adapter = get_adapter(server.adapter_type, server.dsn)
+    try:
+        buckets = adapter.list_buckets()
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=502)
+    try:
+        rows = adapter.query_sql(
+            "select b.id, b.file_size_limit, b.allowed_mime_types, count(o.id) as objects "
+            "from storage.buckets b left join storage.objects o on o.bucket_id = b.id "
+            "group by b.id, b.file_size_limit, b.allowed_mime_types"
+        )["rows"]
+    except Exception:
+        rows = []  # counts are a nicety: the list must not die on them
+    # the supabase adapter stringifies row values ("None" included)
+    clean = lambda v: None if v in (None, "None", "null") else v  # noqa: E731
+    extra = {r["id"]: r for r in rows}
+    for b in buckets:
+        e = extra.get(b["id"], {})
+        b["objects"] = clean(e.get("objects"))
+        b["file_size_limit"] = clean(e.get("file_size_limit"))
+        b["allowed_mime_types"] = clean(e.get("allowed_mime_types"))
+    return JsonResponse({"buckets": buckets})
+
+
 def function_source_json(request, pk, slug):
     """The locally tracked source for the editor; falls back to the API
     body for legacy (pre-bundle) deployments made outside Diabase."""

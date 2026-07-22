@@ -11,6 +11,7 @@ import { initChat } from "./chat.js";
 import { initPlan } from "./plan.js";
 import { initContext } from "./context.js";
 import { initFunctions } from "./functions.js";
+import { initStorage } from "./storage.js";
 import { initParticles } from "./particles.js";
 
 const urls = window.DIABASE;
@@ -41,11 +42,16 @@ const functions = (urls.serverCaps || []).includes("functions")
   ? initFunctions({ listEl: document.getElementById("fn-list"), urls, csrf })
   : null;
 
+const storage = (urls.serverCaps || []).includes("storage")
+  ? initStorage({ listEl: document.getElementById("bucket-list"), urls })
+  : null;
+
 // each pane can lazy-load when it first becomes visible
 const paneHooks = {
   "pane-schema": () => schema.shown(),
   "pane-audit": () => timeline.ensureLogLoaded(),
   "pane-functions": () => functions?.shown(),
+  "pane-storage": () => storage?.shown(),
 };
 const workspace = initWorkspace({
   shellEl: document.getElementById("room-shell"),
@@ -75,6 +81,7 @@ const chat = initChat({
 const refreshPanes = () => {
   schema.refreshIfVisible(workspace.paneVisible("pane-schema"));
   functions?.refreshIfVisible(workspace.paneVisible("pane-functions"));
+  storage?.refreshIfVisible(workspace.paneVisible("pane-storage"));
 };
 
 const plan = initPlan({
