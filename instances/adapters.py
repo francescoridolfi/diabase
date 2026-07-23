@@ -303,7 +303,7 @@ class SupabaseCloudAdapter(BaseAdapter):
 
     MAX_429_RETRIES = 2
 
-    capabilities = frozenset({"functions", "storage", "auth_config"})
+    capabilities = frozenset({"functions", "storage", "auth_config", "advisors"})
 
     def _api(
         self,
@@ -456,6 +456,31 @@ class SupabaseCloudAdapter(BaseAdapter):
             )
         self._api("PATCH", "/config/auth", changes)
         return {"updated": sorted(changes)}
+
+    # ---------- advisors (capability "advisors") ----------
+
+    ADVISOR_KINDS = ("security", "performance")
+
+    def get_advisors(self, kind: str):
+        """The project's advisor lints (what the dashboard's Security /
+        Performance Advisor shows), normalized to what matters for a
+        remediation plan: rule, severity, what/why, and Supabase's own
+        suggested fix."""
+        if kind not in self.ADVISOR_KINDS:
+            raise AdapterError(f"Advisor kind must be one of {', '.join(self.ADVISOR_KINDS)} (got {kind!r})")
+        data = self._api("GET", f"/advisors/{kind}") or {}
+        return [
+            {
+                "name": lint.get("name"),
+                "title": lint.get("title"),
+                "level": lint.get("level"),
+                "description": lint.get("description"),
+                "detail": lint.get("detail"),
+                "remediation": lint.get("remediation"),
+                "metadata": lint.get("metadata"),
+            }
+            for lint in data.get("lints", [])
+        ]
 
     # ---------- storage buckets (capability "storage") ----------
     # The Management API only READS buckets (GET /storage/buckets); the

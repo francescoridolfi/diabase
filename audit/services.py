@@ -124,6 +124,9 @@ class AuditedAdapter:
     def delete_function(self, slug: str):
         return self._call("delete_function", {"slug": slug}, lambda: self._adapter.delete_function(slug))
 
+    def get_advisors(self, kind: str):
+        return self._call("get_advisors", {"kind": kind}, lambda: self._adapter.get_advisors(kind))
+
     def list_buckets(self):
         return self._call("list_buckets", {}, self._adapter.list_buckets)
 

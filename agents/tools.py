@@ -224,6 +224,27 @@ TOOLS: list[ToolSpec] = [
         capability="auth_config",
     ),
     ToolSpec(
+        name="get_advisors",
+        description=(
+            "Fetch the project's advisor report (the dashboard's Security / Performance Advisor): "
+            "every finding with severity, affected object and Supabase's suggested remediation. "
+            "Call it once per kind; verify each finding's current state before fixing it."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string",
+                    "enum": ["security", "performance"],
+                    "description": "Which advisor report to fetch.",
+                }
+            },
+            "required": ["kind"],
+        },
+        risk=Risk.READ,
+        capability="advisors",
+    ),
+    ToolSpec(
         name="read_context_file",
         description=(
             "Read part of a project context file (see the context index in the system prompt). "
@@ -370,6 +391,8 @@ class BoundToolset:
                 )
             if name == "delete_bucket":
                 return self.adapter.delete_bucket(payload["name"])
+            if name == "get_advisors":
+                return {"kind": payload["kind"], "advisors": self.adapter.get_advisors(payload["kind"])}
             if name == "get_auth_config":
                 return {"config": self.adapter.get_auth_config()}
             if name == "update_auth_config":

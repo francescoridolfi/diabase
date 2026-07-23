@@ -59,12 +59,23 @@ key, and email template changes as an HTML diff — when editing a template, get
 first and change only what the task requires. Auth USERS are data, not configuration: they \
 are not managed through these tools."""
 
+ADVISORS_PROMPT = """# Advisors
+This instance exposes Supabase's advisor reports. When the user asks to check security or \
+performance (or to run "the analyses"), call get_advisors for BOTH kinds, then work through \
+the findings: verify each one's current state first (query_sql on pg_policies, pg_indexes, \
+information_schema), fix what your tools cover (SQL, auth config) through the normal write \
+path, and report the rest — findings whose fix lives outside your tools (dashboard settings \
+like PITR, network restrictions, Postgres upgrades) are the user's to act on, with the \
+advisor's remediation text as the pointer. Remember the ownership rule: platform-owned \
+objects flagged by a lint (e.g. spatial_ref_sys) are false positives to report, not fix."""
+
 # capability blocks, injected in a fixed order (prompt caching needs a
 # byte-identical prefix across turns)
 CAPABILITY_PROMPTS = [
     ("functions", FUNCTIONS_PROMPT),
     ("storage", STORAGE_PROMPT),
     ("auth_config", AUTH_PROMPT),
+    ("advisors", ADVISORS_PROMPT),
 ]
 
 

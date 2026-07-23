@@ -89,6 +89,20 @@ class TestAuditedAdapter:
         after = AuditEntry.objects.count()
         assert after == before + 2  # one list_tables + one describe_table
 
+    def test_get_advisors_is_recorded_with_its_kind(self, project):
+        class FakeAdapter:
+            capabilities = frozenset({"advisors"})
+
+            def get_advisors(self, kind):
+                return [{"name": "rls_disabled_in_public", "level": "ERROR"}]
+
+        audited = AuditedAdapter(FakeAdapter(), project=project, actor="claude-test")
+        out = audited.get_advisors("security")
+        assert out[0]["name"] == "rls_disabled_in_public"
+        entry = AuditEntry.objects.get(action="get_advisors")
+        assert entry.payload_in == {"kind": "security"}
+        assert entry.payload_out["result"][0]["level"] == "ERROR"
+
     def test_auth_config_update_payload_is_redacted_in_the_trail(self, project):
         """Defense in depth: the adapter refuses secret writes, but even
         the ATTEMPT must not land in the audit trail with a readable value."""
