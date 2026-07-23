@@ -816,6 +816,54 @@ class TestFunctionTools:
         assert "Edge functions" in build_system_prompt(project)
 
 
+class TestAdvisorTools:
+    """get_advisors: a pure READ — available at every autonomy level,
+    only where the instance has the capability."""
+
+    def _advisor_toolset(self, project, level="plan", turn=None):
+        class FakeAdvisorAdapter:
+            capabilities = frozenset({"advisors"})
+
+            def get_advisors(self, kind):
+                return [{"name": f"{kind}_finding", "level": "WARN"}]
+
+        return BoundToolset(
+            adapter=FakeAdvisorAdapter(),
+            policy=AutonomyPolicy(level),
+            project=project,
+            actor="test",
+            turn=turn,
+        )
+
+    def test_hidden_without_the_capability(self, project):
+        toolset = make_toolset(project)  # sqlite adapter: no "advisors"
+        assert "get_advisors" not in [s.name for s in toolset.allowed_specs()]
+        out = toolset.execute("get_advisors", {"kind": "security"})
+        assert "not supported" in out["error"]
+
+    def test_executes_immediately_even_in_plan_mode(self, project):
+        toolset = self._advisor_toolset(project, turn=make_turn(project))
+        out = toolset.execute("get_advisors", {"kind": "security"})
+        assert out["kind"] == "security"
+        assert out["advisors"] == [{"name": "security_finding", "level": "WARN"}]
+
+    def test_available_in_read_only_mode(self, project):
+        toolset = self._advisor_toolset(project, level="read_only")
+        assert "get_advisors" in [s.name for s in toolset.allowed_specs()]
+        assert (
+            toolset.execute("get_advisors", {"kind": "performance"})["advisors"][0]["name"]
+            == "performance_finding"
+        )
+
+    def test_advisors_prompt_only_for_capable_adapters(self, project):
+        from agents.prompts import build_system_prompt
+
+        assert "# Advisors" not in build_system_prompt(project)  # sqlite
+        project.server.adapter_type = "supabase"
+        prompt = build_system_prompt(project)
+        assert "# Advisors" in prompt and "BOTH kinds" in prompt
+
+
 class TestStorageTools:
     """Bucket tools: same capability gating and plan discipline as the
     function tools — structure through plans, files never."""

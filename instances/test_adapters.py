@@ -361,6 +361,66 @@ class TestSupabaseFunctions:
         assert out == {"slug": "hello", "deleted": True}
 
 
+class TestSupabaseAdvisors:
+    """Advisor lints (capability "advisors"): the dashboard's Security /
+    Performance Advisor reports, normalized for the agent."""
+
+    def _adapter(self, monkeypatch):
+        monkeypatch.setenv("SUPABASE_ACCESS_TOKEN", "sbp_test")
+        return SupabaseCloudAdapter(VALID_REF)
+
+    def test_capability_declared_only_on_supabase(self):
+        assert "advisors" in SupabaseCloudAdapter.capabilities
+        assert "advisors" not in SQLiteAdapter.capabilities
+        assert "advisors" not in PostgresAdapter.capabilities
+
+    def test_get_advisors_normalizes_lints(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        payload = {
+            "lints": [
+                {
+                    "name": "rls_disabled_in_public",
+                    "title": "RLS Disabled in Public",
+                    "level": "ERROR",
+                    "facing": "EXTERNAL",
+                    "categories": ["SECURITY"],
+                    "description": "RLS has not been enabled",
+                    "detail": "Table `public.reviews` is public, but RLS has not been enabled.",
+                    "remediation": "https://supabase.com/docs/guides/database/database-linter",
+                    "metadata": {"schema": "public", "name": "reviews", "type": "table"},
+                    "cache_key": "x",
+                }
+            ]
+        }
+        with mock.patch.object(a, "_api", return_value=payload) as api:
+            out = a.get_advisors("security")
+        assert api.call_args.args == ("GET", "/advisors/security")
+        assert out == [
+            {
+                "name": "rls_disabled_in_public",
+                "title": "RLS Disabled in Public",
+                "level": "ERROR",
+                "description": "RLS has not been enabled",
+                "detail": "Table `public.reviews` is public, but RLS has not been enabled.",
+                "remediation": "https://supabase.com/docs/guides/database/database-linter",
+                "metadata": {"schema": "public", "name": "reviews", "type": "table"},
+            }
+        ]
+
+    def test_performance_kind_hits_its_endpoint(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with mock.patch.object(a, "_api", return_value={"lints": []}) as api:
+            assert a.get_advisors("performance") == []
+        assert api.call_args.args == ("GET", "/advisors/performance")
+
+    def test_unknown_kind_raises_without_calling_the_api(self, monkeypatch):
+        a = self._adapter(monkeypatch)
+        with mock.patch.object(a, "_api") as api:
+            with pytest.raises(AdapterError, match="Advisor kind"):
+                a.get_advisors("vibes")
+        api.assert_not_called()
+
+
 class TestSupabaseStorage:
     """Buckets (capability "storage"): the Management API only lists them;
     mutations are SQL on storage.buckets — the engine (FK from
