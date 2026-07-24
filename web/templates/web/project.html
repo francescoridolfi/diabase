@@ -16,11 +16,12 @@
 </div>
 <div class="chats">
   {% for c in conversations %}
-  <div class="chat-item {% if c.pk == conversation.pk %}active{% endif %}">
+  <div class="chat-item {% if c.pk == conversation.pk %}active{% endif %}" data-chat-id="{{ c.pk }}">
     <a href="{% url 'project_room' project.pk %}?chat={{ c.pk }}">
       <span class="chat-name">{{ c.title|default:"New chat" }}</span>
       <span class="when">{{ c.updated_at|date:"j M · H:i" }}</span>
     </a>
+    <button type="button" class="chat-edit" title="Rename chat" aria-label="Rename chat">✎</button>
     <form method="post" action="{% url 'chat_delete' project.pk c.pk %}"
           onsubmit="return confirm('Delete this chat? Its messages and plans go with it; the audit trail stays.')">
       {% csrf_token %}
@@ -256,6 +257,7 @@
     turnStartUrl: "{% url 'turn_start' project.pk %}",
     turnStreamBase: "{% url 'turn_stream' project.pk 0 %}".replace(/0\/stream\/$/, ""),
     planBase: "{% url 'plan_json' project.pk 0 %}".replace(/0\/$/, ""),
+    chatRenameBase: "{% url 'chat_rename' project.pk 0 %}".replace(/0\/rename\/$/, ""),
     schemaUrl: "{% url 'schema_json' project.pk %}",
     serverCaps: {{ server_caps|default:"[]"|safe }},
     functionsUrl: "{% url 'functions_json' project.pk %}",

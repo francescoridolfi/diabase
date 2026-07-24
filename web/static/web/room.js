@@ -14,6 +14,7 @@ import { initFunctions } from "./functions.js";
 import { initStorage } from "./storage.js";
 import { initAuth } from "./auth.js";
 import { initParticles } from "./particles.js";
+import { initSidebar } from "./sidebar.js";
 
 const urls = window.DIABASE;
 const csrf = () => urls.csrfToken || document.querySelector("[name=csrfmiddlewaretoken]").value;
@@ -102,6 +103,7 @@ const plan = initPlan({
 });
 
 initContext({ chat, urls, csrf });
+initSidebar({ urls, csrf });
 // the sidebar drawer is handled globally by shell.js
 
 // sparks on both orbits: the workspace frame and the mini orb — the same

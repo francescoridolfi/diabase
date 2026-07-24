@@ -229,6 +229,8 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
   transition: background 0.15s var(--ease);
 }
 .chat-item > a { display: flex; flex-direction: column; gap: 0.05rem; padding: 0.45rem 1.7rem 0.45rem 0.65rem; }
+.chat-item > a[hidden] { display: none; } /* while the rename input is in its place */
+.chat-item.renaming .chat-edit, .chat-item.renaming .chat-del { display: none; }
 .chat-item:hover { background: rgba(148, 163, 199, 0.08); }
 .chat-item.active { background: rgba(124, 108, 245, 0.13); border-color: rgba(124, 108, 245, 0.35); }
 .chat-item .chat-name {
@@ -245,6 +247,19 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
 .chat-item:hover .chat-del, .chat-del:focus-visible { opacity: 1; }
 .chat-del:hover { color: var(--danger); filter: none; }
 .chat-item .chat-del:hover { transform: translateY(-50%); }
+.chat-edit {
+  background: none; border: 0; color: var(--dim); padding: 0.2rem 0.3rem;
+  font-size: 0.75rem; opacity: 0; transition: opacity 0.15s var(--ease);
+}
+.chat-item .chat-edit { position: absolute; right: 1.55rem; top: 50%; transform: translateY(-50%); }
+.chat-item:hover .chat-edit, .chat-edit:focus-visible { opacity: 1; }
+.chat-edit:hover { color: var(--txt); filter: none; }
+.chat-item .chat-edit:hover { transform: translateY(-50%); }
+.chat-rename {
+  width: 100%; margin: 0.3rem 0; padding: 0.3rem 0.55rem;
+  font-size: 0.84rem; color: var(--txt);
+  background: rgba(148, 163, 199, 0.08); border: 1px solid var(--aura-3); border-radius: 7px;
+}
 .side-foot { border-top: 1px solid var(--line); margin-top: 0.5rem; padding-top: 0.45rem; display: flex; flex-direction: column; gap: 2px; }
 .side-link {
   display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0.65rem;
@@ -708,7 +723,7 @@ body.overlay-open .overlay-veil { opacity: 1; pointer-events: auto; }
     color: var(--dim); font-size: 1rem; padding: 0;
   }
   .burger:hover { filter: none; transform: none; color: var(--txt); }
-  .chat-item .chat-del { opacity: 1; } /* no hover on touch */
+  .chat-item .chat-del, .chat-item .chat-edit { opacity: 1; } /* no hover on touch */
   .app-main { padding: 1rem 0.9rem 1.5rem; }
   .page { padding-top: 2.4rem; } /* clear the floating burger */
   body.app-room .app-main { padding: 0 0.5rem 0.5rem; }

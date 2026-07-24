@@ -572,6 +572,28 @@ def chat_create(request, pk):
 
 
 @require_POST
+def chat_rename(request, pk, chat_id):
+    from workspaces.models import Conversation
+
+    project = get_object_or_404(Project, pk=pk)
+    conversation = get_object_or_404(Conversation, pk=chat_id, project=project)
+    title = request.POST.get("title", "").strip()[: Conversation._meta.get_field("title").max_length]
+    if not title:
+        return JsonResponse({"error": "Empty title"}, status=400)
+    record(
+        action="chat.renamed",
+        actor_type="user",
+        actor=_actor(request),
+        project=project,
+        payload_in={"conversation": conversation.pk, "title": conversation.title},
+        payload_out={"title": title},
+    )
+    conversation.title = title
+    conversation.save(update_fields=["title", "updated_at"])
+    return JsonResponse({"title": title})
+
+
+@require_POST
 def chat_delete(request, pk, chat_id):
     """Deletes the thread (messages, turns, plans cascade); the audit
     trail keeps everything that ever touched the instance."""
