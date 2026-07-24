@@ -26,5 +26,19 @@
   </div>
   <p class="muted auth-hint">Fresh instance? The bootstrap credential is <code>admin</code> / <code>admin</code> — you'll be asked to change it right away.</p>
 </div>
+<script type="module">
+  /* the same spark swarm that rides the room's mini orb, at rest */
+  import { initParticles } from "{% static 'web/particles.js' %}";
+  initParticles({
+    el: document.querySelector(".orb"),
+    shape: "circle",
+    count: 12,
+    margin: 10,
+    sizeRange: [0.5, 1.6],
+    wobbleRange: [0.8, 2.5],
+    idleSpeed: 16,
+    isWorking: () => false,
+  });
+</script>
 </body>
 </html>
