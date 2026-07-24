@@ -441,6 +441,51 @@ class TestConversationsViews:
         assert not ChatMessage.objects.exists()  # cascade
         assert AuditEntry.objects.filter(action="chat.deleted").exists()
 
+    def test_rename_updates_the_title_and_audits(self, client, project):
+        from workspaces.models import Conversation
+
+        conversation = Conversation.objects.create(project=project, title="Old name")
+        r = client.post(
+            reverse("chat_rename", args=[project.pk, conversation.pk]),
+            {"title": "  RLS deep dive  "},
+        )
+        assert r.status_code == 200
+        assert r.json() == {"title": "RLS deep dive"}
+        conversation.refresh_from_db()
+        assert conversation.title == "RLS deep dive"
+        entry = AuditEntry.objects.get(action="chat.renamed")
+        assert entry.payload_in["title"] == "Old name"
+        assert entry.payload_out["title"] == "RLS deep dive"
+
+    def test_rename_rejects_an_empty_title(self, client, project):
+        from workspaces.models import Conversation
+
+        conversation = Conversation.objects.create(project=project, title="Keep me")
+        r = client.post(reverse("chat_rename", args=[project.pk, conversation.pk]), {"title": "   "})
+        assert r.status_code == 400
+        conversation.refresh_from_db()
+        assert conversation.title == "Keep me"
+        assert not AuditEntry.objects.filter(action="chat.renamed").exists()
+
+    def test_rename_truncates_to_the_field_limit(self, client, project):
+        from workspaces.models import Conversation
+
+        conversation = Conversation.objects.create(project=project)
+        client.post(reverse("chat_rename", args=[project.pk, conversation.pk]), {"title": "x" * 200})
+        conversation.refresh_from_db()
+        assert conversation.title == "x" * 80
+
+    def test_rename_of_a_foreign_chat_404s(self, client, project, tmp_path):
+        from workspaces.models import Conversation
+
+        other_server = Server.objects.create(name="S3", adapter_type="sqlite", dsn=str(tmp_path / "r.db"))
+        other = Project.objects.create(name="Other", server=other_server)
+        foreign = Conversation.objects.create(project=other, title="Theirs")
+        r = client.post(reverse("chat_rename", args=[project.pk, foreign.pk]), {"title": "Mine now"})
+        assert r.status_code == 404
+        foreign.refresh_from_db()
+        assert foreign.title == "Theirs"
+
     def test_deleting_a_chat_keeps_the_audit_trail(self, client, project):
         from audit.services import record
         from workspaces.models import Conversation
