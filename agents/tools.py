@@ -245,6 +245,29 @@ TOOLS: list[ToolSpec] = [
         capability="advisors",
     ),
     ToolSpec(
+        name="recall",
+        description=(
+            "Search the project's memory index: schema table cards (columns, both FK directions, "
+            "indexes), past audited write actions, chat history, context files. Use it BEFORE "
+            "designing schema changes or answering why/where/what-touches questions — results "
+            "carry references to follow up with the targeted tools."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to look for."},
+                "sources": {
+                    "type": "array",
+                    "items": {"type": "string", "enum": ["schema", "audit", "chat", "context"]},
+                    "description": "Restrict to these sources (default: all).",
+                },
+                "k": {"type": "integer", "description": "Max results (default 8)."},
+            },
+            "required": ["query"],
+        },
+        risk=Risk.READ,
+    ),
+    ToolSpec(
         name="read_context_file",
         description=(
             "Read part of a project context file (see the context index in the system prompt). "
@@ -397,6 +420,8 @@ class BoundToolset:
                 return {"config": self.adapter.get_auth_config()}
             if name == "update_auth_config":
                 return self.adapter.update_auth_config(payload["changes"])
+            if name == "recall":
+                return self._recall(payload["query"], payload.get("sources") or None, payload.get("k") or 8)
             if name == "read_context_file":
                 return self._read_context_file(
                     payload["name"], payload.get("offset") or 1, payload.get("limit") or READ_DEFAULT_LIMIT
@@ -570,6 +595,25 @@ class BoundToolset:
             else:
                 fields.append({"key": key, "from": live, "to": proposed})
         return {"changes": fields, "diff": "\n".join(d for d in diffs if d)}
+
+    def _recall(self, query: str, sources: list | None, k) -> dict:
+        """Memory search lives in Diabase's own DB (like context files),
+        so it is audited here rather than through the adapter."""
+        from audit.services import record
+        from memory.services import search
+
+        if self.project is None:
+            return {"error": "No project bound to this toolset"}
+        results = search(self.project, query, sources=sources, k=k)
+        record(
+            action="recall",
+            actor_type="agent",
+            actor=self.actor,
+            project=self.project,
+            payload_in={"query": query, "sources": sources or "all"},
+            payload_out={"results": len(results)},
+        )
+        return {"query": query, "results": results}
 
     def _read_context_file(self, file_name: str, offset: int, limit: int) -> dict:
         """Context files live in Diabase's own DB, not behind the adapter,

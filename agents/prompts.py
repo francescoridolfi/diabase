@@ -79,6 +79,17 @@ CAPABILITY_PROMPTS = [
 ]
 
 
+MEMORY_PROMPT = """# Memory
+recall(query) searches this project's memory index: schema table cards (columns, both FK \
+directions, indexes), past audited write actions, chat history across every conversation, \
+and context files. Use it FIRST when a request needs project knowledge you don't have in \
+front of you — before designing schema changes (recall the related tables and past \
+decisions, not just the table named in the request), and for any "why is X like this?" or \
+"what touches X?" question. Results carry references (table, audit entry, file, chat): \
+follow up with the targeted tool (describe_table, query_sql, read_context_file) instead of \
+trusting a snippet blindly."""
+
+
 def build_system_prompt(project) -> str:
     """Base rules + capability blocks + plan-mode rules + project prompt +
     context. Deterministic by design (see workspaces.context): the prompt
@@ -98,6 +109,7 @@ def build_system_prompt(project) -> str:
         "Diabase is only the control plane you operate through — when the user asks about "
         '"the project" or "the database", they mean the project and instance above.'
     )
+    parts.append(MEMORY_PROMPT)
     adapter_cls = ADAPTERS.get(project.server.adapter_type)
     caps = adapter_cls.capabilities if adapter_cls else frozenset()
     parts.extend(prompt for cap, prompt in CAPABILITY_PROMPTS if cap in caps)

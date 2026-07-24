@@ -71,6 +71,16 @@ Erasure of chat history and context files is direct: delete the chat
 (sidebar ✕) or the file (context editor → Delete file); both deletions are
 audited without retaining the content.
 
+## The memory index
+
+The recall index (`MemoryChunk`) is **derived data**: chunks built from
+the schema, the audit trail, chats and context files, always rebuildable
+(`reindex_memory`). It follows its sources' lifecycle automatically —
+chunks die with the chat or file they came from, and GDPR redaction of
+audit payloads purges the chunks derived from them in the same operation
+(the `payloads_redacted` broadcast). Nothing in the index survives its
+source of truth.
+
 ## Scope notes
 
 - Redaction covers Diabase's own records. Data inside **your managed

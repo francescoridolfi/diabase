@@ -289,6 +289,39 @@ def function_deploy(request, pk, slug):
     return JsonResponse(out)
 
 
+def memory_json(request, pk):
+    """The memory index as the agent sees it: stats always, plus search
+    results when ?q= is given — the tab is a transparency window onto
+    exactly what recall() can retrieve."""
+    from memory.services import search, stats
+
+    project = get_object_or_404(Project, pk=pk)
+    payload = {"stats": stats(project)}
+    query = request.GET.get("q", "").strip()
+    if query:
+        sources = [s for s in request.GET.get("sources", "").split(",") if s]
+        payload["results"] = search(project, query, sources=sources or None)
+    return JsonResponse(payload)
+
+
+@require_POST
+def memory_reindex(request, pk):
+    """Full rebuild, audited with the operator as actor. Schema errors
+    (instance unreachable) are reported in the payload, not fatal."""
+    from memory.services import reindex_project
+
+    project = get_object_or_404(Project.objects.select_related("server"), pk=pk)
+    out = reindex_project(project)
+    record(
+        action="memory.reindexed",
+        actor_type="user",
+        actor=_actor(request),
+        project=project,
+        payload_out=out,
+    )
+    return JsonResponse(out)
+
+
 def audit_partial(request, pk):
     project = get_object_or_404(Project, pk=pk)
     return render(request, "web/_audit_timeline.html", {"audit_entries": project.audit_entries.all()[:10]})

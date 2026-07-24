@@ -13,6 +13,7 @@ import { initContext } from "./context.js";
 import { initFunctions } from "./functions.js";
 import { initStorage } from "./storage.js";
 import { initAuth } from "./auth.js";
+import { initMemory } from "./memory.js";
 import { initParticles } from "./particles.js";
 import { initSidebar } from "./sidebar.js";
 
@@ -52,6 +53,8 @@ const auth = (urls.serverCaps || []).includes("auth_config")
   ? initAuth({ paneEl: document.getElementById("auth-view"), urls })
   : null;
 
+const memory = initMemory({ paneEl: document.getElementById("memory-view"), urls, csrf });
+
 // each pane can lazy-load when it first becomes visible
 const paneHooks = {
   "pane-schema": () => schema.shown(),
@@ -59,6 +62,7 @@ const paneHooks = {
   "pane-functions": () => functions?.shown(),
   "pane-storage": () => storage?.shown(),
   "pane-auth": () => auth?.shown(),
+  "pane-memory": () => memory.shown(),
 };
 const workspace = initWorkspace({
   shellEl: document.getElementById("room-shell"),
@@ -90,6 +94,7 @@ const refreshPanes = () => {
   functions?.refreshIfVisible(workspace.paneVisible("pane-functions"));
   storage?.refreshIfVisible(workspace.paneVisible("pane-storage"));
   auth?.refreshIfVisible(workspace.paneVisible("pane-auth"));
+  memory.refreshIfVisible(workspace.paneVisible("pane-memory"));
 };
 
 const plan = initPlan({
