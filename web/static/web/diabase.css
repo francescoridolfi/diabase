@@ -350,6 +350,7 @@ button.ghost { background: transparent; border: 1px solid var(--line-strong); co
 }
 .seg-btn:hover { filter: none; transform: none; color: var(--txt); }
 .seg-btn + .seg-btn { border-left: 1px solid var(--line); }
+.seg-btn.on { background: rgba(124, 108, 245, 0.16); color: var(--aura-1); }
 .seg-btn.seg-read_only.on { background: rgba(62, 201, 167, 0.14); color: var(--read); }
 .seg-btn.seg-plan.on { background: rgba(242, 178, 74, 0.14); color: var(--write); }
 .seg-btn.seg-full.on { background: rgba(124, 108, 245, 0.16); color: var(--aura-1); }
@@ -400,6 +401,14 @@ body.overlay-open .overlay-veil { opacity: 1; pointer-events: auto; }
   margin-bottom: 0.8rem;
 }
 .card-head h2 { margin: 0; }
+/* settings: description on the left, one action on the right (audit & privacy) */
+.row-actions {
+  display: flex; align-items: center; gap: 0.9rem; margin-top: 0.6rem;
+}
+.row-actions .muted { flex: 1 1 auto; }
+.row-actions button { flex: 0 0 auto; padding: 0.45rem 1rem; font-size: 0.82rem; white-space: nowrap; }
+.danger-btn { background: var(--danger); color: #fff; }
+.danger-btn:hover { filter: brightness(1.08); }
 .add-btn {
   position: relative; width: 28px; height: 28px; padding: 0; flex: 0 0 auto;
   border-radius: 50%; display: grid; place-items: center;

@@ -5,6 +5,7 @@
     <span class="who">{{ e.actor_type }}{% if e.actor %} · {{ e.actor }}{% endif %}</span>
     <span class="what">{{ e.action }}</span>
     <span class="outcome {% if e.outcome == 'success' %}ok{% else %}err{% endif %}">{{ e.outcome }}</span>
+    {% if e.redacted_at %}<span class="pill" title="Payload redacted on {{ e.redacted_at|date:'Y-m-d' }} (retention/erasure policy)">redacted</span>{% endif %}
     {% if e.error %}<div class="err-detail">{{ e.error }}</div>{% endif %}
   </div>
   {% empty %}

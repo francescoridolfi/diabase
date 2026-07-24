@@ -119,3 +119,152 @@ class TestAuditedAdapter:
         entry = AuditEntry.objects.get(action="update_auth_config")
         assert entry.outcome == "error"
         assert entry.payload_in == {"changes": {"smtp_pass": "***set***", "site_url": "https://x"}}  # noqa: S105 # nosec B105
+
+
+def _backdate(entry, days):
+    """Test-only: created_at is auto_now_add and the model is append-only,
+    so age an entry by calling the BASE QuerySet.update directly — the
+    exact bypass production code must never take."""
+    from datetime import timedelta
+
+    from django.db import models
+    from django.utils import timezone
+
+    models.QuerySet.update(
+        AuditEntry.objects.filter(pk=entry.pk), created_at=timezone.now() - timedelta(days=days)
+    )
+
+
+class TestRetention:
+    def test_redaction_tombstones_payloads_but_keeps_the_row(self, project):
+        from audit.services import apply_retention
+
+        old = record(
+            action="execute_sql",
+            actor_type="agent",
+            actor="claude",
+            project=project,
+            payload_in={"sql": "INSERT INTO users VALUES ('mario@rossi.it')"},
+            payload_out={"rows_affected": 1},
+        )
+        _backdate(old, days=40)
+        fresh = record(action="execute_sql", actor_type="agent", payload_in={"sql": "SELECT 1"})
+
+        assert apply_retention(actor="francesco", days=30) == 1
+        old.refresh_from_db()
+        fresh.refresh_from_db()
+        assert old.payload_in == {"redacted": True, "reason": "retention"}
+        assert old.payload_out == {"redacted": True, "reason": "retention"}
+        assert old.redacted_at is not None
+        # the who/what/when survives
+        assert old.action == "execute_sql" and old.actor == "claude" and old.outcome == "success"
+        # inside the window: untouched
+        assert fresh.payload_in == {"sql": "SELECT 1"} and fresh.redacted_at is None
+        # the run itself is in the trail
+        run = AuditEntry.objects.get(action="audit.redacted")
+        assert run.actor == "francesco"
+        assert run.payload_in == {"reason": "retention", "days": 30}
+        assert run.payload_out == {"rows": 1}
+
+    def test_zero_window_is_a_silent_noop(self, project):
+        from audit.services import apply_retention
+
+        e = record(action="x", actor_type="system", payload_in={"a": 1})
+        _backdate(e, days=400)
+        assert apply_retention(days=0) == 0
+        assert apply_retention() == 0  # stored policy defaults to 0 = forever
+        e.refresh_from_db()
+        assert e.payload_in == {"a": 1}
+        assert not AuditEntry.objects.filter(action="audit.redacted").exists()
+
+    def test_redaction_is_idempotent(self, project):
+        from audit.services import apply_retention
+
+        e = record(action="x", actor_type="system", payload_in={"a": 1})
+        _backdate(e, days=40)
+        assert apply_retention(days=30) == 1
+        assert apply_retention(days=30) == 0  # already-tombstoned rows are skipped
+        e.refresh_from_db()
+        assert e.payload_in == {"redacted": True, "reason": "retention"}
+
+    def test_stored_policy_drives_the_window(self, project):
+        from audit.models import RetentionPolicy
+        from audit.services import apply_retention
+
+        policy = RetentionPolicy.load()
+        policy.audit_payload_days = 30
+        policy.save()
+        e = record(action="x", actor_type="system", payload_in={"a": 1})
+        _backdate(e, days=40)
+        assert apply_retention() == 1
+
+
+class TestErasure:
+    def test_needle_matches_in_and_out_and_error(self, project):
+        from audit.services import erase_payloads
+
+        hit_in = record(action="a", actor_type="agent", payload_in={"sql": "…Mario@Rossi.it…"})
+        hit_out = record(action="b", actor_type="agent", payload_out={"rows": [{"email": "mario@rossi.it"}]})
+        hit_err = record(action="c", actor_type="agent", outcome="error", error="dup mario@rossi.it")
+        miss = record(action="d", actor_type="agent", payload_in={"sql": "SELECT 1"})
+
+        assert erase_payloads(needle="mario@rossi.it", actor="francesco") == 3
+        for e in (hit_in, hit_out, hit_err):
+            e.refresh_from_db()
+            assert e.payload_in == {"redacted": True, "reason": "erasure"}
+            assert e.error == ""
+        miss.refresh_from_db()
+        assert miss.redacted_at is None
+
+    def test_the_needle_never_lands_in_the_trail(self, project):
+        from audit.services import erase_payloads
+
+        record(action="a", actor_type="agent", payload_in={"x": "mario@rossi.it"})
+        erase_payloads(needle="mario@rossi.it", actor="francesco")
+        run = AuditEntry.objects.get(action="audit.redacted")
+        assert "mario" not in str(run.payload_in) and "mario" not in str(run.payload_out)
+        assert run.payload_in == {"reason": "erasure", "scope": "needle"}
+
+    def test_project_scope(self, project, tmp_path):
+        from audit.services import erase_payloads
+
+        other_server = Server.objects.create(name="Other", adapter_type="sqlite", dsn=str(tmp_path / "o.db"))
+        other = Project.objects.create(name="Other project", server=other_server)
+        mine = record(action="a", actor_type="agent", project=project, payload_in={"x": "mario"})
+        theirs = record(action="a", actor_type="agent", project=other, payload_in={"x": "mario"})
+
+        assert erase_payloads(needle="mario", project=project, actor="francesco") == 1
+        mine.refresh_from_db()
+        theirs.refresh_from_db()
+        assert mine.redacted_at is not None and theirs.redacted_at is None
+
+    def test_requires_a_criterion(self):
+        from audit.services import erase_payloads
+
+        with pytest.raises(ValueError, match="needle"):
+            erase_payloads()
+
+
+class TestPurgeCommand:
+    def test_retention_mode(self, project):
+        from django.core.management import call_command
+
+        e = record(action="x", actor_type="system", payload_in={"a": 1})
+        _backdate(e, days=40)
+        call_command("purge_audit_payloads", days=30)
+        e.refresh_from_db()
+        assert e.redacted_at is not None
+
+    def test_erasure_mode(self, project):
+        from django.core.management import call_command
+
+        e = record(action="x", actor_type="system", project=project, payload_in={"x": "mario"})
+        call_command("purge_audit_payloads", erase_contains="mario", project=project.pk)
+        e.refresh_from_db()
+        assert e.redacted_at is not None
+
+    def test_unknown_project_errors(self):
+        from django.core.management import CommandError, call_command
+
+        with pytest.raises(CommandError, match="No project"):
+            call_command("purge_audit_payloads", erase_contains="x", project=99999)
