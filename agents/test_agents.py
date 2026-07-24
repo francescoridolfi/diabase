@@ -69,6 +69,7 @@ class TestBoundToolset:
             "list_tables",
             "describe_table",
             "query_sql",
+            "recall",
             "read_context_file",
             "search_context_files",
         ]
@@ -201,6 +202,7 @@ class TestAnthropicAPIBackend:
             "describe_table",
             "query_sql",
             "execute_sql",
+            "recall",
             "read_context_file",
             "search_context_files",
         ]
@@ -814,6 +816,36 @@ class TestFunctionTools:
         assert "Edge functions" not in build_system_prompt(project)  # sqlite
         project.server.adapter_type = "supabase"
         assert "Edge functions" in build_system_prompt(project)
+
+
+class TestRecallTool:
+    """recall: capability-free READ over Diabase's own index — available
+    everywhere, audited, never touching the instance."""
+
+    def test_recall_searches_and_audits(self, project):
+        from workspaces.services import save_context_file
+
+        save_context_file(project, "conv.md", "# Buckets\navatars are stored in the avatars bucket\n")
+        toolset = make_toolset(project, "read_only")  # READ: works even here
+        out = toolset.execute("recall", {"query": "where are avatars stored"})
+        assert out["results"][0]["source"] == "context"
+        assert "avatars bucket" in out["results"][0]["snippet"]
+        entry = AuditEntry.objects.get(action="recall")
+        assert entry.payload_in["query"] == "where are avatars stored"
+        assert entry.payload_out == {"results": len(out["results"])}
+
+    def test_recall_respects_source_filter(self, project):
+        from workspaces.services import save_context_file
+
+        save_context_file(project, "a.md", "orders notes\n")
+        out = make_toolset(project).execute("recall", {"query": "orders", "sources": ["schema"]})
+        assert out["results"] == []
+
+    def test_memory_prompt_always_present(self, project):
+        from agents.prompts import build_system_prompt
+
+        prompt = build_system_prompt(project)
+        assert "# Memory" in prompt and "recall(query)" in prompt
 
 
 class TestAdvisorTools:

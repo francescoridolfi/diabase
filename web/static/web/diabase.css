@@ -424,6 +424,17 @@ body.overlay-open .overlay-veil { opacity: 1; pointer-events: auto; }
 .row-actions button { flex: 0 0 auto; padding: 0.45rem 1rem; font-size: 0.82rem; white-space: nowrap; }
 .danger-btn { background: var(--danger); color: #fff; }
 .danger-btn:hover { filter: brightness(1.08); }
+
+/* memory tab: search hits over the recall() index */
+.mem-hit { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0.55rem 0.7rem; }
+.mem-head { display: flex; align-items: center; gap: 0.5rem; min-width: 0; font-size: 0.85rem; }
+.mem-head .fname { font-family: var(--mono); flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-snippet {
+  margin: 0.45rem 0 0; padding: 0; border: 0; background: none;
+  font: 0.74rem/1.5 var(--mono); color: var(--dim);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 7.5em; overflow: hidden;
+}
 .add-btn {
   position: relative; width: 28px; height: 28px; padding: 0; flex: 0 0 auto;
   border-radius: 50%; display: grid; place-items: center;

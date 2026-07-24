@@ -756,6 +756,25 @@ class TestFunctionsViews:
         assert b"pane-auth" in r.content
         assert b'id="tpl-preview"' in r.content
 
+    def test_memory_json_stats_and_search(self, client, project):
+        from workspaces.services import save_context_file
+
+        save_context_file(project, "a.md", "# Payments\nstripe webhooks\n")
+        r = client.get(reverse("memory_json", args=[project.pk]))
+        assert r.json()["stats"]["context"] == 1 and "results" not in r.json()
+        r = client.get(reverse("memory_json", args=[project.pk]), {"q": "stripe"})
+        assert r.json()["results"][0]["ref"].startswith("file:a.md")
+
+    def test_memory_reindex_is_audited(self, client, project):
+        r = client.post(reverse("memory_reindex", args=[project.pk]))
+        assert r.status_code == 200 and "total" in r.json()
+        entry = AuditEntry.objects.get(action="memory.reindexed")
+        assert entry.actor == "francesco"
+
+    def test_memory_tab_renders_for_every_adapter(self, client, project):
+        r = client.get(reverse("project_room", args=[project.pk]))
+        assert b"pane-memory" in r.content  # sqlite too: the index is Diabase-side
+
     def test_settings_page_shows_audit_privacy_section(self, client, project):
         r = client.get(reverse("settings"))
         assert b"Audit &amp; privacy" in r.content

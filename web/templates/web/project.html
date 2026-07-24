@@ -56,6 +56,7 @@
       {% if "storage" in server_caps %}<button class="mt" data-view="pane-storage">Storage</button>{% endif %}
       {% if "auth_config" in server_caps %}<button class="mt" data-view="pane-auth">Auth</button>{% endif %}
       <button class="mt" data-view="pane-audit">Audit</button>
+      <button class="mt" data-view="pane-memory">Memory</button>
       <button class="mt" data-view="pane-context">Context</button>
       <button class="mt" data-view="pane-settings">Settings</button>
     </nav>
@@ -78,6 +79,7 @@
       {% if "storage" in server_caps %}<button class="tab" role="tab" data-pane="pane-storage">Storage</button>{% endif %}
       {% if "auth_config" in server_caps %}<button class="tab" role="tab" data-pane="pane-auth">Auth</button>{% endif %}
       <button class="tab" role="tab" data-pane="pane-audit">Audit</button>
+      <button class="tab" role="tab" data-pane="pane-memory">Memory</button>
       <button class="tab" role="tab" data-pane="pane-context">Context</button>
       <button class="tab" role="tab" data-pane="pane-settings">Settings</button>
     </nav>
@@ -122,6 +124,11 @@
       <h2 class="pane-label" style="margin-top:1.1rem">Full log</h2>
       <div id="audit-log-list"></div>
       <button class="ghost" id="audit-more" style="margin-top:0.8rem; display:none">Load more</button>
+    </div>
+
+    <div class="pane" id="pane-memory" role="tabpanel" hidden>
+      <h2 class="pane-label">Memory <span class="dim-note">— what recall() can retrieve: schema cards, decisions, chats, docs</span></h2>
+      <div id="memory-view"><p class="dim-note">Loading…</p></div>
     </div>
 
     <div class="pane" id="pane-context" role="tabpanel" hidden>
@@ -265,6 +272,8 @@
     authConfigUrl: "{% url 'auth_config_json' project.pk %}",
     monacoBase: "{% static 'web/vendor/monaco/vs' %}",
     {% if project.server.adapter_type == "supabase" %}supabaseDashboard: "https://supabase.com/dashboard/project/{{ project.server.dsn }}",{% endif %}
+    memoryUrl: "{% url 'memory_json' project.pk %}",
+    memoryReindexUrl: "{% url 'memory_reindex' project.pk %}",
     auditUrl: "{% url 'audit_partial' project.pk %}",
     auditLogUrl: "{% url 'audit_log' project.pk %}",
     contextFileSaveUrl: "{% url 'context_file_save' project.pk %}",

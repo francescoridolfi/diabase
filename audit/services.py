@@ -9,6 +9,8 @@ Dependency direction: every other app calls into `audit`; `audit` only
 depends on `workspaces` (for the Project FK) and on the adapter interface.
 """
 
+from django.dispatch import Signal
+
 from instances.adapters import AdapterError, BaseAdapter
 from workspaces.models import Project
 
@@ -185,6 +187,10 @@ class AuditedAdapter:
 # (AppendOnlyQuerySet.redact_payloads) and record THEMSELVES in the
 # trail: a redaction that left no trace would defeat the trail's point.
 
+# broadcast after payloads are tombstoned (kwarg: pks) so DERIVED data —
+# e.g. the memory index — dies with them; audit itself depends on nobody
+payloads_redacted = Signal()
+
 
 def apply_retention(*, actor: str = "", days: int | None = None) -> int:
     """Redact payloads older than the retention window. `days` overrides
@@ -201,7 +207,11 @@ def apply_retention(*, actor: str = "", days: int | None = None) -> int:
     if not days:
         return 0
     cutoff = timezone.now() - timedelta(days=days)
-    count = AuditEntry.objects.filter(created_at__lt=cutoff).redact_payloads(reason="retention")
+    expired = AuditEntry.objects.filter(created_at__lt=cutoff, redacted_at__isnull=True)
+    pks = list(expired.values_list("pk", flat=True))
+    count = AuditEntry.objects.filter(pk__in=pks).redact_payloads(reason="retention")
+    if count:
+        payloads_redacted.send(sender=AuditEntry, pks=pks)
     record(
         action="audit.redacted",
         actor_type="user" if actor else "system",
@@ -235,7 +245,10 @@ def erase_payloads(*, needle: str = "", project=None, actor: str = "") -> int:
             or lowered in e.error.lower()
         ]
         qs = AuditEntry.objects.filter(pk__in=pks)
+    redacted_pks = list(qs.values_list("pk", flat=True))
     count = qs.redact_payloads(reason="erasure")
+    if count:
+        payloads_redacted.send(sender=AuditEntry, pks=redacted_pks)
     record(
         action="audit.redacted",
         actor_type="user" if actor else "system",
