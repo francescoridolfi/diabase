@@ -15,6 +15,23 @@ class AppendOnlyQuerySet(models.QuerySet):
     def bulk_update(self, objs, fields, **kwargs):
         raise TypeError("AuditEntry is append-only: bulk_update is not allowed")
 
+    def redact_payloads(self, *, reason: str) -> int:
+        """The ONE sanctioned mutation on existing rows (GDPR, issue #1):
+        replaces the payloads with a tombstone and stamps redacted_at.
+        WHO did WHAT, WHEN, with what outcome stays forever — only the
+        data content dies. Callers go through audit.services (which
+        records the redaction itself in the trail); already-redacted
+        rows are skipped so the operation is idempotent."""
+        from django.utils import timezone
+
+        tombstone = {"redacted": True, "reason": reason}
+        return super(AppendOnlyQuerySet, self.filter(redacted_at__isnull=True)).update(
+            payload_in=tombstone,
+            payload_out=tombstone,
+            error="",
+            redacted_at=timezone.now(),
+        )
+
 
 class AuditEntry(models.Model):
     """One immutable row per action, human or AI.
@@ -51,6 +68,9 @@ class AuditEntry(models.Model):
     error = models.TextField(blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+    # set when the payloads were tombstoned (retention or erasure);
+    # the row itself never goes away
+    redacted_at = models.DateTimeField(null=True, blank=True)
 
     objects = AppendOnlyQuerySet.as_manager()
 
@@ -71,3 +91,30 @@ class AuditEntry(models.Model):
 
     def delete(self, *args, **kwargs):
         raise TypeError("AuditEntry is append-only: rows cannot be deleted")
+
+
+class RetentionPolicy(models.Model):
+    """Site-wide audit retention (singleton, pk=1).
+
+    0 = keep payloads forever: whoever self-hosts Diabase is the data
+    controller, so nothing is thrown away unless they turn the window
+    on. A positive value redacts payloads older than that many days on
+    every purge run (Settings button or the purge_audit_payloads cron
+    command); the rows and their who/what/when survive redaction."""
+
+    audit_payload_days = models.PositiveIntegerField(
+        default=0, help_text="Days to keep audit payloads; 0 keeps them forever"
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = "retention policy"
+
+    def __str__(self):
+        days = self.audit_payload_days
+        return f"audit payloads: {f'{days}d' if days else 'forever'}"
+
+    @classmethod
+    def load(cls) -> "RetentionPolicy":
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj

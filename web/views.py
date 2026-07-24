@@ -338,8 +338,23 @@ def connections(request):
     )
 
 
+RETENTION_PRESETS = [(0, "Forever"), (30, "30 days"), (90, "90 days"), (365, "1 year")]
+
+
 def settings_page(request):
-    """Site settings; LLM connections are the only section for now."""
+    """Site settings: LLM connections, audit & privacy."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from audit.models import AuditEntry, RetentionPolicy
+
+    retention = RetentionPolicy.load()
+    expired = 0
+    if retention.audit_payload_days:
+        cutoff = timezone.now() - timedelta(days=retention.audit_payload_days)
+        expired = AuditEntry.objects.filter(created_at__lt=cutoff, redacted_at__isnull=True).count()
+    presets = [d for d, _ in RETENTION_PRESETS]
     return render(
         request,
         "web/settings.html",
@@ -347,9 +362,59 @@ def settings_page(request):
             "connections": AgentConnection.objects.all(),
             "backend_choices": AgentConnection.BACKENDS,
             "agent": _agent_status(),
+            "retention": retention,
+            "retention_presets": RETENTION_PRESETS,
+            "retention_is_custom": retention.audit_payload_days not in presets,
+            "expired_count": expired,
+            "projects": Project.objects.select_related("server").order_by("name"),
             "nav_active": "settings",
         },
     )
+
+
+@require_POST
+def audit_policy_update(request):
+    from audit.models import RetentionPolicy
+
+    try:
+        days = max(0, int(request.POST.get("audit_payload_days", "0")))
+    except ValueError:
+        return redirect("settings")
+    policy = RetentionPolicy.load()
+    if days != policy.audit_payload_days:
+        policy.audit_payload_days = days
+        policy.save(update_fields=["audit_payload_days", "updated_at"])
+        record(
+            action="audit.retention_updated",
+            actor_type="user",
+            actor=_actor(request),
+            payload_in={"audit_payload_days": days},
+        )
+    return redirect("settings")
+
+
+@require_POST
+def audit_purge_now(request):
+    """The Settings button: apply the retention window immediately,
+    audited with the operator as actor (apply_retention records it)."""
+    from audit.services import apply_retention
+
+    apply_retention(actor=_actor(request))
+    return redirect("settings")
+
+
+@require_POST
+def audit_erase(request):
+    """Right-to-erasure from the GUI: redact payloads containing the
+    given text, optionally scoped to one project. The needle never
+    lands in the trail (see erase_payloads)."""
+    from audit.services import erase_payloads
+
+    needle = request.POST.get("contains", "").strip()
+    project = Project.objects.filter(pk=request.POST.get("project") or None).first()
+    if needle or project:
+        erase_payloads(needle=needle, project=project, actor=_actor(request))
+    return redirect("settings")
 
 
 @require_POST

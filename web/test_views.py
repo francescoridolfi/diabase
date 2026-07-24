@@ -711,6 +711,50 @@ class TestFunctionsViews:
         assert b"pane-auth" in r.content
         assert b'id="tpl-preview"' in r.content
 
+    def test_settings_page_shows_audit_privacy_section(self, client, project):
+        r = client.get(reverse("settings"))
+        assert b"Audit &amp; privacy" in r.content
+        assert b"payloads kept forever" in r.content  # default policy: 0
+
+    def test_retention_update_is_audited(self, client, project):
+        from audit.models import RetentionPolicy
+
+        r = client.post(reverse("audit_policy_update"), {"audit_payload_days": "90"})
+        assert r.status_code == 302
+        assert RetentionPolicy.load().audit_payload_days == 90
+        entry = AuditEntry.objects.get(action="audit.retention_updated")
+        assert entry.actor == "francesco" and entry.payload_in == {"audit_payload_days": 90}
+
+    def test_purge_now_applies_the_window_as_the_user(self, client, project):
+        with mock.patch("audit.services.apply_retention") as ar:
+            # the view imports it from audit.services at call time
+            client.post(reverse("audit_purge_now"))
+        ar.assert_called_once_with(actor="francesco")
+
+    def test_erase_view_scopes_and_audits(self, client, project):
+        from audit.services import record
+
+        record(action="execute_sql", actor_type="agent", project=project, payload_in={"x": "mario"})
+        r = client.post(reverse("audit_erase"), {"contains": "mario", "project": project.pk})
+        assert r.status_code == 302
+        entry = AuditEntry.objects.get(action="execute_sql")
+        assert entry.redacted_at is not None
+        run = AuditEntry.objects.get(action="audit.redacted")
+        assert run.actor == "francesco" and "mario" not in str(run.payload_in)
+
+    def test_erase_without_criterion_is_a_noop(self, client, project):
+        r = client.post(reverse("audit_erase"), {"contains": "   "})
+        assert r.status_code == 302
+        assert not AuditEntry.objects.filter(action="audit.redacted").exists()
+
+    def test_redacted_entries_show_the_pill_in_the_log(self, client, project):
+        from audit.services import erase_payloads, record
+
+        record(action="execute_sql", actor_type="agent", project=project, payload_in={"x": "mario"})
+        erase_payloads(needle="mario", project=project)
+        r = client.get(reverse("audit_log", args=[project.pk]))
+        assert b">redacted</span>" in r.content
+
     def test_plan_json_carries_step_meta(self, client, project, proposed_plan):
         step = proposed_plan.steps.get()
         step.meta = {"updates_existing": True, "diff": "-a\n+b"}
