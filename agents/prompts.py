@@ -88,6 +88,16 @@ def build_system_prompt(project) -> str:
     from workspaces.context import build_context_block
 
     parts = [BASE_SYSTEM_PROMPT]
+    # WHO the agent works for: without this the only name in the prompt
+    # is Diabase's own, and asked "what project is this?" the model
+    # answers "Diabase" instead of the user's project
+    parts.append(
+        "# Current workspace\n"
+        f"Project: {project.name}\n"
+        f"Instance: {project.server.name} ({project.server.get_adapter_type_display()})\n"
+        "Diabase is only the control plane you operate through — when the user asks about "
+        '"the project" or "the database", they mean the project and instance above.'
+    )
     adapter_cls = ADAPTERS.get(project.server.adapter_type)
     caps = adapter_cls.capabilities if adapter_cls else frozenset()
     parts.extend(prompt for cap, prompt in CAPABILITY_PROMPTS if cap in caps)
