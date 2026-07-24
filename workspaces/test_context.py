@@ -70,6 +70,15 @@ class TestContextBlock:
         assert "Speak Italian to the user." in prompt
         assert "tickets.stato is an enum" in prompt
 
+    def test_prompt_names_the_project_not_just_diabase(self, project):
+        """Asked "what project is this?", the agent must answer with the
+        USER'S project — Diabase is the control plane, not the subject."""
+        prompt = build_system_prompt(project)
+        assert "# Current workspace" in prompt
+        assert f"Project: {project.name}" in prompt
+        assert f"Instance: {project.server.name}" in prompt
+        assert "only the control plane" in prompt
+
 
 class TestReadContextFileTool:
     def make_toolset(self, project):
