@@ -178,3 +178,70 @@ class AuditedAdapter:
     def get_schema(self):
         # composed of audited calls: each underlying list/describe is recorded
         return {t: self.describe_table(t) for t in self.list_tables()}
+
+
+# ---------- GDPR: retention & erasure (issue #1) ----------
+# Both operations tombstone payloads through the single sanctioned path
+# (AppendOnlyQuerySet.redact_payloads) and record THEMSELVES in the
+# trail: a redaction that left no trace would defeat the trail's point.
+
+
+def apply_retention(*, actor: str = "", days: int | None = None) -> int:
+    """Redact payloads older than the retention window. `days` overrides
+    the stored policy (used by the cron command's --days); 0 or an unset
+    policy means keep forever and is a no-op that records nothing."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from .models import RetentionPolicy
+
+    if days is None:
+        days = RetentionPolicy.load().audit_payload_days
+    if not days:
+        return 0
+    cutoff = timezone.now() - timedelta(days=days)
+    count = AuditEntry.objects.filter(created_at__lt=cutoff).redact_payloads(reason="retention")
+    record(
+        action="audit.redacted",
+        actor_type="user" if actor else "system",
+        actor=actor,
+        payload_in={"reason": "retention", "days": days},
+        payload_out={"rows": count},
+    )
+    return count
+
+
+def erase_payloads(*, needle: str = "", project=None, actor: str = "") -> int:
+    """Right-to-erasure: redact the payloads matching a request — every
+    entry of a project, or the entries whose payload contains `needle`
+    (an email, a name...). The needle itself is NOT recorded: writing
+    "erase mario@rossi.it" into the trail would re-create the data the
+    request asked to remove."""
+    import json
+
+    if not needle and project is None:
+        raise ValueError("erase_payloads needs a needle and/or a project")
+    qs = AuditEntry.objects.filter(redacted_at__isnull=True)
+    if project is not None:
+        qs = qs.filter(project=project)
+    if needle:
+        lowered = needle.lower()
+        pks = [
+            e.pk
+            for e in qs.only("pk", "payload_in", "payload_out", "error")
+            if lowered in json.dumps(e.payload_in, default=str).lower()
+            or lowered in json.dumps(e.payload_out, default=str).lower()
+            or lowered in e.error.lower()
+        ]
+        qs = AuditEntry.objects.filter(pk__in=pks)
+    count = qs.redact_payloads(reason="erasure")
+    record(
+        action="audit.redacted",
+        actor_type="user" if actor else "system",
+        actor=actor,
+        project=project,
+        payload_in={"reason": "erasure", "scope": "project" if project is not None else "needle"},
+        payload_out={"rows": count},
+    )
+    return count

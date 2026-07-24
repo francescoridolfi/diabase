@@ -32,6 +32,75 @@
       {% endfor %}
     </div>
   </div>
+
+  <div class="card" style="margin-top:1rem">
+    <div class="card-head">
+      <h2>Audit &amp; privacy</h2>
+      {% if retention.audit_payload_days %}<span class="pill">payloads kept {{ retention.audit_payload_days }} days</span>
+      {% else %}<span class="pill ok">payloads kept forever</span>{% endif %}
+    </div>
+    <p class="muted" style="margin-top:0">
+      The trail itself is permanent — who did what, when, with what outcome. Payloads (SQL,
+      query results, deployed code) can carry personal data: policies <em>redact</em> them
+      in place, history is never deleted.
+    </p>
+
+    <h3 class="pane-label">Payload retention</h3>
+    <form method="post" action="{% url 'audit_policy_update' %}">{% csrf_token %}
+      <div class="seg" role="radiogroup" aria-label="Payload retention">
+        {% for days, label in retention_presets %}
+        <button type="submit" name="audit_payload_days" value="{{ days }}"
+                class="seg-btn {% if retention.audit_payload_days == days %}on{% endif %}"
+                {% if retention.audit_payload_days == days %}aria-current="true"{% endif %}>{{ label }}</button>
+        {% endfor %}
+        {% if retention_is_custom %}
+        <button type="submit" name="audit_payload_days" value="{{ retention.audit_payload_days }}"
+                class="seg-btn on" aria-current="true">{{ retention.audit_payload_days }} days</button>
+        {% endif %}
+      </div>
+    </form>
+    <p class="seg-note">
+      {% if retention.audit_payload_days %}Payloads older than {{ retention.audit_payload_days }} days are
+      redacted on every cleanup run — click below, or schedule <code>purge_audit_payloads</code> daily.
+      {% else %}Nothing is ever thrown away. Pick a window to start redacting old payloads.{% endif %}
+    </p>
+    {% if retention.audit_payload_days %}
+    <form method="post" action="{% url 'audit_purge_now' %}" class="row-actions"
+          onsubmit="return confirm('Redact {{ expired_count }} payload(s) older than {{ retention.audit_payload_days }} days now? The rows stay; their data content is replaced by a tombstone. This cannot be undone.')">
+      {% csrf_token %}
+      <span class="muted">{{ expired_count }} payload{{ expired_count|pluralize }} currently outside the window</span>
+      <button type="submit" class="ghost" {% if not expired_count %}disabled{% endif %}>Run cleanup now</button>
+    </form>
+    {% endif %}
+
+    <h3 class="pane-label" style="margin-top:1.2rem">Right to erasure</h3>
+    <div class="row-actions">
+      <span class="muted">Redact every payload containing a given text — an email, a name — for
+        GDPR erasure requests. The searched text is not written back to the trail.</span>
+      <button type="button" class="ghost" style="color:var(--danger)" data-modal-open="modal-erase">Erase…</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay modal-sm" id="modal-erase" role="dialog" aria-modal="true" aria-label="Right to erasure">
+  <div class="panel-header">
+    <h2 style="margin:0">Right to erasure</h2>
+    <button class="icon-btn" data-close title="Close (Esc)" aria-label="Close">✕</button>
+  </div>
+  <form method="post" action="{% url 'audit_erase' %}" class="stack"
+        onsubmit="return this.contains.value.trim() ? confirm('Redact every audit payload containing “' + this.contains.value.trim() + '”' + (this.project.value ? ' in the selected project' : ' across all projects') + '? This cannot be undone.') : false">
+    {% csrf_token %}
+    <label class="lbl">Payloads containing</label>
+    <input type="text" name="contains" required placeholder="e.g. mario@example.com" autocomplete="off">
+    <label class="lbl">Scope</label>
+    <select name="project">
+      <option value="">All projects</option>
+      {% for p in projects %}<option value="{{ p.pk }}">{{ p.name }} — {{ p.server.name }}</option>{% endfor %}
+    </select>
+    <p class="muted" style="margin:0; font-size:0.78rem">Matching entries keep their who/what/when; the
+      data content is tombstoned with reason “erasure”. The operation is audited without the searched text.</p>
+    <button type="submit" class="danger-btn">Erase payloads</button>
+  </form>
 </div>
 
 <div class="modal-overlay modal-sm" id="modal-new-connection" role="dialog" aria-modal="true" aria-label="New LLM connection">
