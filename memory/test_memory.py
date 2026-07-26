@@ -19,6 +19,20 @@ def project(tmp_path):
     return Project.objects.create(name="Mem", server=server)
 
 
+class ImmediateThread:
+    """Runs the reindex worker synchronously; is_alive() is False by the
+    time anyone can ask, exactly like a finished thread."""
+
+    def __init__(self, target, daemon=None):
+        self._target = target
+
+    def start(self):
+        self._target()
+
+    def is_alive(self):
+        return False
+
+
 def chunks(project, source=None):
     qs = MemoryChunk.objects.filter(project=project)
     return qs.filter(source_type=source) if source else qs
@@ -188,6 +202,41 @@ class TestReindex:
         out = reindex_project(project)
         assert "schema" in out["errors"]
         assert chunks(project, "context").count() == 1
+
+    def test_start_reindex_runs_the_worker_and_clears(self, project):
+        from unittest import mock
+
+        from memory.services import reindex_running, start_reindex
+
+        save_context_file(project, "n.md", "async content\n")
+        MemoryChunk.objects.all().delete()
+        with mock.patch("memory.services.threading.Thread", ImmediateThread):
+            assert start_reindex(project, actor="francesco") is True
+        assert chunks(project, "context").count() == 1
+        assert reindex_running(project) is False  # finished thread: free to run again
+
+    def test_start_reindex_refuses_a_second_concurrent_run(self, project):
+        from unittest import mock
+
+        from memory.services import start_reindex
+
+        class NeverEndingThread(ImmediateThread):
+            def start(self):
+                pass  # never runs, always "alive"
+
+            def is_alive(self):
+                return True
+
+        from memory import services
+
+        try:
+            with mock.patch("memory.services.threading.Thread", NeverEndingThread):
+                assert start_reindex(project) is True
+                assert start_reindex(project) is False
+        finally:
+            # the fake never dies: purge it or it poisons later tests
+            # that reuse this pk after the DB rollback
+            services._REINDEXING.clear()
 
     def test_command_runs(self, project):
         from django.core.management import call_command

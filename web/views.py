@@ -293,10 +293,10 @@ def memory_json(request, pk):
     """The memory index as the agent sees it: stats always, plus search
     results when ?q= is given — the tab is a transparency window onto
     exactly what recall() can retrieve."""
-    from memory.services import search, stats
+    from memory.services import reindex_running, search, stats
 
     project = get_object_or_404(Project, pk=pk)
-    payload = {"stats": stats(project)}
+    payload = {"stats": stats(project), "indexing": reindex_running(project)}
     query = request.GET.get("q", "").strip()
     if query:
         sources = [s for s in request.GET.get("sources", "").split(",") if s]
@@ -306,20 +306,15 @@ def memory_json(request, pk):
 
 @require_POST
 def memory_reindex(request, pk):
-    """Full rebuild, audited with the operator as actor. Schema errors
-    (instance unreachable) are reported in the payload, not fatal."""
-    from memory.services import reindex_project
+    """Kick off a BACKGROUND rebuild (a first reindex on a real instance
+    is seconds of Management API + backfill: the request must not hang
+    on it). Completion is audited by the worker with this operator as
+    actor; the tab polls memory_json until `indexing` clears."""
+    from memory.services import start_reindex
 
     project = get_object_or_404(Project.objects.select_related("server"), pk=pk)
-    out = reindex_project(project)
-    record(
-        action="memory.reindexed",
-        actor_type="user",
-        actor=_actor(request),
-        project=project,
-        payload_out=out,
-    )
-    return JsonResponse(out)
+    started = start_reindex(project, actor=_actor(request))
+    return JsonResponse({"started": started})
 
 
 def audit_partial(request, pk):
