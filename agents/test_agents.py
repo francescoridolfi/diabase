@@ -303,6 +303,49 @@ class TestClaudeCodeBackend:
             next(it)
 
 
+class TestClaudeCodeErrorMapping:
+    """Field regression: a long session (35 queued plan steps) died as
+    'Claude Code: unknown error' — the SDK's max-turns budget ran out and
+    its ResultMessage carries no result text, only a subtype."""
+
+    def _run_with_result(self, project, monkeypatch, result_message):
+        import sys
+        import types
+
+        toolset = make_toolset(project)
+
+        async def fake_query(*, prompt, options):
+            yield result_message
+
+        fake_module = types.SimpleNamespace(
+            AssistantMessage=type("AM", (), {}),
+            ClaudeAgentOptions=lambda **kw: types.SimpleNamespace(**kw),
+            ResultMessage=type(result_message),
+            TextBlock=type("TB", (), {}),
+            create_sdk_mcp_server=lambda name, version, tools: {},
+            query=fake_query,
+            tool=lambda name, description, schema: (lambda fn: fn),
+        )
+        monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_module)
+        events = list(
+            ClaudeCodeBackend().run(system_prompt="s", history=[], user_message="go", toolset=toolset)
+        )
+        return events[-1]
+
+    def test_max_turns_gets_a_useful_message(self, project, monkeypatch):
+        from agents.backends.claude_code import MAX_TURNS
+
+        Result = type("R", (), {"is_error": True, "subtype": "error_max_turns", "result": None})
+        out = self._run_with_result(project, monkeypatch, Result())
+        assert isinstance(out, TurnFailed)
+        assert f"all {MAX_TURNS} tool rounds" in out.error and "unknown" not in out.error
+
+    def test_other_errors_keep_their_subtype_at_least(self, project, monkeypatch):
+        Result = type("R", (), {"is_error": True, "subtype": "error_during_execution", "result": None})
+        out = self._run_with_result(project, monkeypatch, Result())
+        assert isinstance(out, TurnFailed) and "error_during_execution" in out.error
+
+
 class FakeBackend:
     """Deterministic backend for orchestration tests."""
 
