@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import re
+import threading
 
 from django.db.models import Count
 
@@ -295,6 +296,54 @@ def reindex_project(project) -> dict:
         "total": MemoryChunk.objects.filter(project=project).count(),
         **({"errors": errors} if errors else {}),
     }
+
+
+# a first reindex on a real instance takes seconds (Management API round
+# trips + audit backfill): it runs on a background thread — same pattern
+# as agent turns — and the Memory tab polls stats while it works
+_REINDEXING: dict[int, threading.Thread] = {}
+_REINDEX_LOCK = threading.Lock()
+
+
+def reindex_running(project) -> bool:
+    thread = _REINDEXING.get(project.pk)
+    if thread is None:
+        return False
+    if not thread.is_alive():
+        _REINDEXING.pop(project.pk, None)
+        return False
+    return True
+
+
+def start_reindex(project, *, actor: str = "") -> bool:
+    """Kick off a background rebuild; the completion (with counts and
+    any schema error) lands in the audit trail. Returns False when one
+    is already running for this project."""
+
+    def worker():
+        try:
+            out = reindex_project(project)
+            from audit.services import record
+
+            record(
+                action="memory.reindexed",
+                actor_type="user" if actor else "system",
+                actor=actor,
+                project=project,
+                payload_out=out,
+            )
+        finally:
+            from django.db import connections
+
+            connections.close_all()  # this thread's connection must not linger in the pool
+
+    with _REINDEX_LOCK:
+        if reindex_running(project):
+            return False
+        thread = threading.Thread(target=worker, daemon=True)
+        _REINDEXING[project.pk] = thread
+        thread.start()
+    return True
 
 
 # ---------- retrieval ----------

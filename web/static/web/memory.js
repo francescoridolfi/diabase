@@ -25,13 +25,27 @@ export function initMemory({ paneEl, urls, csrf }) {
   const statsEl = paneEl.querySelector("#mem-stats");
   const reindexBtn = paneEl.querySelector("#mem-reindex");
 
-  function renderStats(stats) {
+  let poller = null;
+
+  function renderStats(stats, indexing) {
     const total = Object.values(stats).reduce((a, b) => a + b, 0);
     statsEl.textContent =
+      (indexing ? "indexing… " : "") +
       `${total} chunks — ` +
       Object.entries(stats)
         .map(([s, n]) => `${s} ${n}`)
         .join(" · ");
+  }
+
+  /* while a background reindex runs, the stats line ticks along with it */
+  function setPolling(active) {
+    reindexBtn.disabled = active;
+    reindexBtn.textContent = active ? "Reindexing…" : "Reindex";
+    if (active && !poller) poller = setInterval(() => load(input.value.trim()), 1200);
+    if (!active && poller) {
+      clearInterval(poller);
+      poller = null;
+    }
   }
 
   function renderResults(results) {
@@ -63,8 +77,9 @@ export function initMemory({ paneEl, urls, csrf }) {
     const url = query ? `${urls.memoryUrl}?q=${encodeURIComponent(query)}` : urls.memoryUrl;
     try {
       const data = await fetch(url).then((r) => r.json());
-      renderStats(data.stats);
+      renderStats(data.stats, data.indexing);
       renderResults(data.results ?? null);
+      setPolling(Boolean(data.indexing));
     } catch (e) {
       resultsEl.innerHTML = `<p class="dim-note" style="color:var(--danger)">${esc(e.message)}</p>`;
     }
@@ -77,8 +92,7 @@ export function initMemory({ paneEl, urls, csrf }) {
   });
 
   reindexBtn.addEventListener("click", async () => {
-    reindexBtn.disabled = true;
-    reindexBtn.textContent = "Reindexing…";
+    setPolling(true);
     try {
       const r = await fetch(urls.memoryReindexUrl, {
         method: "POST",
@@ -86,13 +100,10 @@ export function initMemory({ paneEl, urls, csrf }) {
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || "reindex failed");
-      await load(input.value.trim());
-      if (data.errors) window.alert("Reindexed with warnings: " + JSON.stringify(data.errors));
+      // started (or already running): either way the poller tracks it
     } catch (e) {
+      setPolling(false);
       window.alert("Reindex failed: " + e.message);
-    } finally {
-      reindexBtn.disabled = false;
-      reindexBtn.textContent = "Reindex";
     }
   });
 

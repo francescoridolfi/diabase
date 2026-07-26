@@ -765,11 +765,20 @@ class TestFunctionsViews:
         r = client.get(reverse("memory_json", args=[project.pk]), {"q": "stripe"})
         assert r.json()["results"][0]["ref"].startswith("file:a.md")
 
-    def test_memory_reindex_is_audited(self, client, project):
-        r = client.post(reverse("memory_reindex", args=[project.pk]))
-        assert r.status_code == 200 and "total" in r.json()
+    def test_memory_reindex_runs_in_background_and_audits(self, client, project):
+        """The POST returns immediately; the worker (synchronous here)
+        does the rebuild and records it with the operator as actor."""
+        from memory.test_memory import ImmediateThread
+
+        with mock.patch("memory.services.threading.Thread", ImmediateThread):
+            r = client.post(reverse("memory_reindex", args=[project.pk]))
+        assert r.status_code == 200 and r.json() == {"started": True}
         entry = AuditEntry.objects.get(action="memory.reindexed")
-        assert entry.actor == "francesco"
+        assert entry.actor == "francesco" and "total" in entry.payload_out
+
+    def test_memory_json_exposes_the_indexing_flag(self, client, project):
+        r = client.get(reverse("memory_json", args=[project.pk]))
+        assert r.json()["indexing"] is False
 
     def test_memory_tab_renders_for_every_adapter(self, client, project):
         r = client.get(reverse("project_room", args=[project.pk]))
