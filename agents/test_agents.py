@@ -224,6 +224,28 @@ class TestClaudeCodeBackend:
             ok, reason = ClaudeCodeBackend().availability()
             assert not ok and "claude" in reason
 
+    def test_watchdog_fails_the_turn_when_the_bridge_goes_silent(self, project, monkeypatch):
+        """Field bug: the CLI subprocess can die without its stream ever
+        raising or completing — the old `q.get()` waited forever and the
+        turn hung on "thinking" until the 20-minute stream reaper. A
+        silent bridge must fail the turn itself."""
+        backend = ClaudeCodeBackend()
+        monkeypatch.setattr(backend, "IDLE_TIMEOUT_SECONDS", 0.05)
+
+        class _HungThread:
+            def __init__(self, target, daemon=None):
+                pass
+
+            def start(self):
+                pass  # the worker never runs: the queue stays empty forever
+
+        with mock.patch("agents.backends.claude_code.threading.Thread", _HungThread):
+            events = list(
+                backend.run(system_prompt="s", history=[], user_message="hi", toolset=make_toolset(project))
+            )
+        assert len(events) == 1 and isinstance(events[0], TurnFailed)
+        assert "silent" in events[0].error and "send the message again" in events[0].error
+
     @pytest.mark.django_db(transaction=True)
     def test_events_arrive_incrementally_not_buffered_until_the_end(self, project, monkeypatch):
         """Regression test for the bug where this backend collected every

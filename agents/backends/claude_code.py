@@ -40,6 +40,11 @@ _DONE = object()  # sentinel: the worker thread has nothing left to push
 class ClaudeCodeBackend(AgentBackend):
     name = "claude_code"
 
+    # watchdog: the CLI subprocess can die without its stream ever raising
+    # or completing (seen in the field) — a bridge silent for this long is
+    # dead, and the turn must fail NOW, not at the stream reaper's timeout
+    IDLE_TIMEOUT_SECONDS = 300
+
     def __init__(self, model: str | None = None):
         self.model = model or ""
 
@@ -65,7 +70,17 @@ class ClaudeCodeBackend(AgentBackend):
 
         threading.Thread(target=worker, daemon=True).start()
         while True:
-            item = q.get()
+            try:
+                item = q.get(timeout=self.IDLE_TIMEOUT_SECONDS)
+            except queue.Empty:
+                yield TurnFailed(
+                    error=(
+                        "Claude Code went silent for "
+                        f"{self.IDLE_TIMEOUT_SECONDS // 60} minutes — its subprocess most "
+                        "likely died. The turn was aborted: send the message again."
+                    )
+                )
+                return
             if item is _DONE:
                 return
             yield item
