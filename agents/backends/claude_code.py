@@ -33,7 +33,11 @@ from .base import (
     TurnFailed,
 )
 
-MAX_TURNS = 15
+# the SDK counts every tool round as a "turn": our design runs ONE tool
+# call per round (each audited), so a real work session — e.g. queueing
+# dozens of plan steps — burns rounds fast. 15 proved far too tight in
+# the field (a storage restructure died at step 35 of its plan).
+MAX_TURNS = 60
 _DONE = object()  # sentinel: the worker thread has nothing left to push
 
 
@@ -139,6 +143,10 @@ class ClaudeCodeBackend(AgentBackend):
         )
 
         texts: list[str] = []
+        outcome: TurnEvent | None = None
+        # no `return` inside the async-for: leaving the SDK's generator
+        # mid-iteration trips its teardown ("aclose(): asynchronous
+        # generator is already running" in the server log)
         async for message in query(prompt="\n\n".join(parts), options=options):
             if isinstance(message, AssistantMessage):
                 for block in message.content:
@@ -146,5 +154,17 @@ class ClaudeCodeBackend(AgentBackend):
                         texts.append(block.text)
                         q.put(TextDelta(text=block.text))
             elif isinstance(message, ResultMessage) and message.is_error:
-                return TurnFailed(error=f"Claude Code: {message.result or 'unknown error'}")
-        return TurnCompleted(reply="\n\n".join(texts) or "(no reply)")
+                subtype = getattr(message, "subtype", "")
+                if subtype == "error_max_turns":
+                    # the SDK's budget ran out mid-work: say so usefully —
+                    # "unknown error" cost a field session 35 queued steps
+                    outcome = TurnFailed(
+                        error=(
+                            f"Claude Code: the turn used all {MAX_TURNS} tool rounds before "
+                            "finishing. Re-ask with a narrower scope, or tell the agent to "
+                            "continue from where it stopped."
+                        )
+                    )
+                else:
+                    outcome = TurnFailed(error=f"Claude Code: {message.result or subtype or 'unknown error'}")
+        return outcome or TurnCompleted(reply="\n\n".join(texts) or "(no reply)")
