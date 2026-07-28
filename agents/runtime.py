@@ -30,7 +30,14 @@ from instances.adapters import get_adapter
 from workspaces.models import ChatMessage, Conversation, Project
 
 from .backends.anthropic_api import AnthropicAPIBackend
-from .backends.base import AgentBackend, PlanProposed, TurnCompleted, TurnEvent, TurnFailed
+from .backends.base import (
+    AgentBackend,
+    PlanProposed,
+    TextDelta,
+    TurnCompleted,
+    TurnEvent,
+    TurnFailed,
+)
 from .backends.claude_code import ClaudeCodeBackend
 from .backends.openai_compat import OpenAICompatBackend
 from .policy import DEFAULT_LEVEL, AutonomyPolicy
@@ -144,7 +151,7 @@ def _start(
 def _drive(
     turn, project: Project, backend: AgentBackend, toolset, history, user_message: str
 ) -> Iterator[TurnEvent]:
-    def finalize(status: str, *, reply: str = "", error: str = ""):
+    def finalize(status: str, *, reply: str = "", error: str = "", partial: bool = False):
         turn.status = status
         turn.error = error
         turn.finished_at = timezone.now()
@@ -158,8 +165,18 @@ def _drive(
                 actor_type="agent",
                 actor=backend.name,
                 project=project,
-                payload_out={"reply": reply},
+                payload_out={"reply": reply, **({"partial": True} if partial else {})},
             )
+
+    # every streamed text block, kept so a FAILED turn can still persist
+    # what the user already read: without this, a refresh after a failure
+    # rebuilt the chat from ChatMessage rows only and the whole streamed
+    # answer vanished (field report)
+    partial_texts: list[str] = []
+
+    def fail(error: str):
+        finalize("failed", reply="\n\n".join(partial_texts), error=error, partial=True)
+        _discard_draft_plan(turn)
 
     try:
         for event in backend.run(
@@ -168,18 +185,18 @@ def _drive(
             user_message=user_message,
             toolset=toolset,
         ):
+            if isinstance(event, TextDelta):
+                partial_texts.append(event.text)
             if isinstance(event, TurnCompleted):
                 finalize("completed", reply=event.reply)
                 plan = _propose_draft_plan(turn, backend.name)
                 if plan:
                     yield PlanProposed(plan_id=plan.pk, steps=plan.steps.count())
             elif isinstance(event, TurnFailed):
-                finalize("failed", error=event.error)
-                _discard_draft_plan(turn)
+                fail(event.error)
             yield event
     except Exception as e:
-        finalize("failed", error=f"{type(e).__name__}: {e}")
-        _discard_draft_plan(turn)
+        fail(f"{type(e).__name__}: {e}")
         yield TurnFailed(error=f"{type(e).__name__}: {e}")
 
 

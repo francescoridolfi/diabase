@@ -405,8 +405,25 @@ class TestRunTurn:
         assert isinstance(out[-1], TurnFailed)
         turn = Turn.objects.get()
         assert turn.status == "failed" and turn.error == "boom"
-        # user message persisted, no assistant reply
+        # user message persisted; nothing was streamed, so no reply row
         assert list(ChatMessage.objects.values_list("role", flat=True)) == ["user"]
+
+    def test_failed_turn_keeps_the_partial_reply(self, project):
+        """Field bug: text the user already READ (streamed live) vanished
+        on refresh when the turn later failed — the partial reply must be
+        persisted like a normal one."""
+        events = [
+            TextDelta(text="Here is my analysis so far."),
+            TextDelta(text="And a second block."),
+            TurnFailed(error="subprocess died"),
+        ]
+        with mock.patch("agents.runtime.get_backend", return_value=FakeBackend(events)):
+            list(run_turn(project, "analyze"))
+        saved = ChatMessage.objects.get(role="assistant")
+        assert saved.content == "Here is my analysis so far.\n\nAnd a second block."
+        entry = AuditEntry.objects.get(action="chat.reply")
+        assert entry.payload_out["partial"] is True
+        assert Turn.objects.get().status == "failed"
 
     def test_get_backend_env_selection(self, monkeypatch):
         monkeypatch.setenv("AGENT_BACKEND", "openai_compat")
