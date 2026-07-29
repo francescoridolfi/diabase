@@ -63,6 +63,10 @@ class Turn(models.Model):
     )
     backend = models.CharField(max_length=30)
     model = models.CharField(max_length=100, blank=True)
+    # which server process started this turn's worker (runtime.BOOT_ID):
+    # workers don't survive their process, so a "running" turn from
+    # another boot is an orphan by definition — see runtime.reap_orphans
+    boot_id = models.CharField(max_length=32, blank=True, default="")
     status = models.CharField(max_length=10, choices=STATUSES, default="running")
     error = models.TextField(blank=True)
     user_message = models.TextField()

@@ -109,9 +109,13 @@ def project_create(request):
 
 
 def project_room(request, pk):
+    from agents.runtime import reap_orphans
     from workspaces.models import Conversation
 
     project = get_object_or_404(Project.objects.select_related("server"), pk=pk)
+    # zombies from a previous server process must not greet the user as
+    # "thinking": fail them (persisting partials) before picking active_turn
+    reap_orphans(project)
     conversations = list(project.conversations.all())
     selected = None
     if request.GET.get("chat"):
@@ -726,8 +730,10 @@ def turn_stream(request, pk, turn_id):
     """
     from agents.models import Turn
     from agents.models import TurnEvent as TurnEventRow
+    from agents.runtime import reap_orphans
 
     project = get_object_or_404(Project, pk=pk)
+    reap_orphans(project)  # reconnecting to a zombie ends it (readably) instead of spinning
     turn = get_object_or_404(Turn, pk=turn_id, project=project)
     try:
         after = int(request.GET.get("after", 0))
