@@ -21,6 +21,7 @@ of losing it.
 import dataclasses
 import os
 import threading
+import uuid
 from collections.abc import Iterator
 
 from django.utils import timezone
@@ -30,12 +31,23 @@ from instances.adapters import get_adapter
 from workspaces.models import ChatMessage, Conversation, Project
 
 from .backends.anthropic_api import AnthropicAPIBackend
-from .backends.base import AgentBackend, PlanProposed, TurnCompleted, TurnEvent, TurnFailed
+from .backends.base import (
+    AgentBackend,
+    PlanProposed,
+    TextDelta,
+    TurnCompleted,
+    TurnEvent,
+    TurnFailed,
+)
 from .backends.claude_code import ClaudeCodeBackend
 from .backends.openai_compat import OpenAICompatBackend
 from .policy import DEFAULT_LEVEL, AutonomyPolicy
 from .prompts import build_system_prompt
 from .tools import BoundToolset
+
+# regenerated at every process start: turns stamped with a different
+# boot id cannot have a live worker (threads die with their process)
+BOOT_ID = uuid.uuid4().hex
 
 BACKENDS: dict[str, type[AgentBackend]] = {
     "anthropic_api": AnthropicAPIBackend,
@@ -123,6 +135,7 @@ def _start(
         conversation=conversation,
         backend=backend.name,
         model=getattr(backend, "model", ""),
+        boot_id=BOOT_ID,
         user_message=user_message,
     )
     # the toolset needs the Turn: queued plan steps attach to it, and the
@@ -144,7 +157,7 @@ def _start(
 def _drive(
     turn, project: Project, backend: AgentBackend, toolset, history, user_message: str
 ) -> Iterator[TurnEvent]:
-    def finalize(status: str, *, reply: str = "", error: str = ""):
+    def finalize(status: str, *, reply: str = "", error: str = "", partial: bool = False):
         turn.status = status
         turn.error = error
         turn.finished_at = timezone.now()
@@ -158,8 +171,18 @@ def _drive(
                 actor_type="agent",
                 actor=backend.name,
                 project=project,
-                payload_out={"reply": reply},
+                payload_out={"reply": reply, **({"partial": True} if partial else {})},
             )
+
+    # every streamed text block, kept so a FAILED turn can still persist
+    # what the user already read: without this, a refresh after a failure
+    # rebuilt the chat from ChatMessage rows only and the whole streamed
+    # answer vanished (field report)
+    partial_texts: list[str] = []
+
+    def fail(error: str):
+        finalize("failed", reply="\n\n".join(partial_texts), error=error, partial=True)
+        _discard_draft_plan(turn)
 
     try:
         for event in backend.run(
@@ -168,19 +191,58 @@ def _drive(
             user_message=user_message,
             toolset=toolset,
         ):
+            if isinstance(event, TextDelta):
+                partial_texts.append(event.text)
             if isinstance(event, TurnCompleted):
                 finalize("completed", reply=event.reply)
                 plan = _propose_draft_plan(turn, backend.name)
                 if plan:
                     yield PlanProposed(plan_id=plan.pk, steps=plan.steps.count())
             elif isinstance(event, TurnFailed):
-                finalize("failed", error=event.error)
-                _discard_draft_plan(turn)
+                fail(event.error)
             yield event
     except Exception as e:
-        finalize("failed", error=f"{type(e).__name__}: {e}")
-        _discard_draft_plan(turn)
+        fail(f"{type(e).__name__}: {e}")
         yield TurnFailed(error=f"{type(e).__name__}: {e}")
+
+
+def reap_orphans(project: Project | None = None) -> int:
+    """Fail every "running" turn whose worker cannot exist — it was
+    started by another process (boot id mismatch). Called lazily where
+    zombies get met (room load, stream connect): a dev autoreload or a
+    prod restart must never leave a chat stuck on "thinking". Streamed
+    partial text is persisted, same contract as a live failure."""
+    from .models import Turn, TurnEvent
+
+    qs = Turn.objects.filter(status="running").exclude(boot_id=BOOT_ID)
+    if project is not None:
+        qs = qs.filter(project=project)
+    reaped = 0
+    for turn in qs.select_related("project", "conversation"):
+        turn.status = "failed"
+        turn.error = "Turn interrupted by a server restart — send the message again."
+        turn.finished_at = timezone.now()
+        turn.save(update_fields=["status", "error", "finished_at"])
+        _discard_draft_plan(turn)
+        texts = [
+            e.data.get("text", "")
+            for e in TurnEvent.objects.filter(turn=turn, kind="TextDelta").order_by("pk")
+        ]
+        partial = "\n\n".join(t for t in texts if t)
+        if partial and turn.conversation:
+            ChatMessage.objects.create(
+                project=turn.project, conversation=turn.conversation, role="assistant", content=partial
+            )
+        TurnEvent.objects.create(turn=turn, kind="TurnFailed", data={"error": turn.error})
+        record(
+            action="turn.reaped",
+            actor_type="system",
+            project=turn.project,
+            payload_in={"turn": turn.pk},
+            payload_out={"partial_chars": len(partial)},
+        )
+        reaped += 1
+    return reaped
 
 
 def _propose_draft_plan(turn, actor: str):

@@ -405,8 +405,68 @@ class TestRunTurn:
         assert isinstance(out[-1], TurnFailed)
         turn = Turn.objects.get()
         assert turn.status == "failed" and turn.error == "boom"
-        # user message persisted, no assistant reply
+        # user message persisted; nothing was streamed, so no reply row
         assert list(ChatMessage.objects.values_list("role", flat=True)) == ["user"]
+
+    def test_failed_turn_keeps_the_partial_reply(self, project):
+        """Field bug: text the user already READ (streamed live) vanished
+        on refresh when the turn later failed — the partial reply must be
+        persisted like a normal one."""
+        events = [
+            TextDelta(text="Here is my analysis so far."),
+            TextDelta(text="And a second block."),
+            TurnFailed(error="subprocess died"),
+        ]
+        with mock.patch("agents.runtime.get_backend", return_value=FakeBackend(events)):
+            list(run_turn(project, "analyze"))
+        saved = ChatMessage.objects.get(role="assistant")
+        assert saved.content == "Here is my analysis so far.\n\nAnd a second block."
+        entry = AuditEntry.objects.get(action="chat.reply")
+        assert entry.payload_out["partial"] is True
+        assert Turn.objects.get().status == "failed"
+
+    def test_orphan_turns_from_a_previous_boot_are_reaped(self, project):
+        """A dev autoreload or prod restart kills every worker: turns
+        stamped with another process's boot id must fail on sight, with
+        their streamed text persisted — never a chat stuck on thinking."""
+        from agents.models import TurnEvent
+        from agents.runtime import BOOT_ID, reap_orphans
+        from workspaces.models import Conversation
+
+        conversation = Conversation.objects.create(project=project)
+        zombie = Turn.objects.create(
+            project=project,
+            conversation=conversation,
+            backend="claude_code",
+            boot_id="dead-process",
+            user_message="do things",
+            status="running",
+        )
+        TurnEvent.objects.create(turn=zombie, kind="TextDelta", data={"text": "half an answer"})
+        alive = Turn.objects.create(
+            project=project,
+            conversation=conversation,
+            backend="claude_code",
+            boot_id=BOOT_ID,
+            user_message="still working",
+            status="running",
+        )
+
+        assert reap_orphans(project) == 1
+        zombie.refresh_from_db()
+        alive.refresh_from_db()
+        assert zombie.status == "failed" and "server restart" in zombie.error
+        assert alive.status == "running"  # this process's worker is real
+        assert ChatMessage.objects.get(role="assistant").content == "half an answer"
+        assert TurnEvent.objects.filter(turn=zombie, kind="TurnFailed").exists()
+        assert AuditEntry.objects.filter(action="turn.reaped").exists()
+
+    def test_reap_is_idempotent_and_scoped(self, project):
+        from agents.runtime import reap_orphans
+
+        Turn.objects.create(project=project, backend="x", boot_id="dead", user_message="m", status="running")
+        assert reap_orphans(project) == 1
+        assert reap_orphans(project) == 0  # already failed: nothing left
 
     def test_get_backend_env_selection(self, monkeypatch):
         monkeypatch.setenv("AGENT_BACKEND", "openai_compat")

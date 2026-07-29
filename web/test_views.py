@@ -46,6 +46,7 @@ class TestPages:
 
     def test_project_room_exposes_running_turn_for_resume(self, client, project):
         from agents.models import Turn
+        from agents.runtime import BOOT_ID
         from workspaces.models import Conversation
 
         conversation = Conversation.objects.create(project=project)
@@ -53,6 +54,7 @@ class TestPages:
             project=project,
             conversation=conversation,
             backend="claude_code",
+            boot_id=BOOT_ID,  # this process's worker: NOT an orphan
             user_message="hi",
             status="running",
         )
@@ -157,8 +159,11 @@ class TestTurnStream:
         itself reaps it once its time budget is exhausted, so a client
         reconnecting to it doesn't spin on 'thinking...' indefinitely."""
         from agents.models import Turn
+        from agents.runtime import BOOT_ID
 
-        turn = Turn.objects.create(project=project, backend="fake", user_message="hi", status="running")
+        turn = Turn.objects.create(
+            project=project, backend="fake", boot_id=BOOT_ID, user_message="hi", status="running"
+        )
         with (
             mock.patch("web.views.STREAM_POLL_SECONDS", 0.01),
             mock.patch("web.views.STREAM_MAX_SECONDS", 0.02),
