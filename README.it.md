@@ -18,6 +18,28 @@ L'MCP ufficiale di Supabase esegue direttamente sul tuo progetto di produzione: 
 - **Progetti** — workspace stile Claude con system prompt, file di contesto e livello di autonomia propri
 - **Il tuo LLM, la tua scelta** — Claude Code CLI (abbonamento) o API a consumo, configurato dalle impostazioni
 
+## Quickstart (Docker)
+
+```bash
+docker compose up -d
+```
+
+Apri http://localhost:8000 e accedi con `admin` / `admin` — al primo login viene
+forzata la rotazione della password. I dati (database e secret key generata)
+vivono nel volume `diabase-data`; imposta `DIABASE_PORT` o
+`DIABASE_ALLOWED_HOSTS` nell'ambiente per cambiare i default.
+
+> Il backend Claude Code CLI richiede la CLI installata, che l'immagine non
+> include. Nel container usa le connessioni API (Anthropic o qualsiasi endpoint
+> OpenAI-compatibile); il backend Claude Code funziona da checkout dei sorgenti.
+
+Per lo sviluppo, esegui invece dai sorgenti:
+
+```bash
+uv run python manage.py migrate
+uv run python manage.py runserver 8001
+```
+
 ## Licenza
 
 [Apache 2.0](LICENSE)
