@@ -86,6 +86,11 @@ input, select, textarea {
   width: 100%;
   transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
 }
+input[type="checkbox"] {
+  width: auto;
+  accent-color: var(--aura-1);
+  padding: 0;
+}
 input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--aura-1);

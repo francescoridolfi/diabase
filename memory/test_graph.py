@@ -153,6 +153,53 @@ class TestGdprPropagation:
         assert graph.remove_refs(project.pk, ["audit:999"]) is False
 
 
+class TestGraphSearch:
+    """graph.search: ephemeral client, project-scoped groups, and the
+    guarantee that an unconfigured or failing graph returns nothing."""
+
+    class FakeSearchClient:
+        def __init__(self, edges):
+            self._edges = edges
+            self.calls = []
+            self.closed = False
+
+        async def search(self, query, group_ids=None, num_results=10):
+            self.calls.append({"query": query, "group_ids": group_ids, "num_results": num_results})
+            return self._edges
+
+        async def close(self):
+            self.closed = True
+
+    def test_unconfigured_returns_empty(self, project):
+        assert graph.search(project, "orders") == []
+
+    def test_facts_come_back_with_temporal_validity(self, project, configured, monkeypatch):
+        import types
+
+        edge = types.SimpleNamespace(
+            uuid="u1",
+            name="RENAMED_TO",
+            fact="orders was renamed to sales",
+            valid_at=datetime(2026, 7, 30, tzinfo=UTC),
+            invalid_at=None,
+        )
+        client = self.FakeSearchClient([edge])
+        monkeypatch.setattr(graph, "_build_client", lambda: client)
+        (hit,) = graph.search(project, "orders", k=5)
+        assert hit["source"] == "graph" and hit["ref"] == "graph:u1"
+        assert "renamed to sales" in hit["snippet"]
+        assert hit["valid_at"].startswith("2026-07-30") and hit["invalid_at"] is None
+        assert client.calls[0]["group_ids"] == [str(project.pk)]
+        assert client.closed is True
+
+    def test_a_failing_graph_degrades_to_no_results(self, project, configured, monkeypatch):
+        def boom():
+            raise ConnectionError("neo4j down")
+
+        monkeypatch.setattr(graph, "_build_client", boom)
+        assert graph.search(project, "orders") == []
+
+
 class TestWorkerProcessing:
     """_process against a fake Graphiti client: the bridge table must
     mirror every add and remove."""

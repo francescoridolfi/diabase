@@ -966,6 +966,33 @@ class TestRecallTool:
         out = make_toolset(project).execute("recall", {"query": "orders", "sources": ["schema"]})
         assert out["results"] == []
 
+    def test_recall_merges_graph_facts_when_active(self, project, monkeypatch):
+        from memory import graph
+
+        monkeypatch.setattr(
+            graph,
+            "search",
+            lambda p, q, k=8: [
+                {
+                    "source": "graph",
+                    "ref": "graph:u1",
+                    "title": "orders",
+                    "snippet": "orders renamed to sales",
+                }
+            ],
+        )
+        out = make_toolset(project).execute("recall", {"query": "orders"})
+        assert out["results"][0]["source"] == "graph"
+        assert "note" not in out
+
+    def test_recall_notes_inactive_graph_when_asked_for_it(self, project, monkeypatch):
+        from memory import graph
+
+        monkeypatch.setattr(graph, "is_configured", lambda: False)
+        out = make_toolset(project).execute("recall", {"query": "orders", "sources": ["graph"]})
+        assert out["results"] == []
+        assert "not active" in out["note"]
+
     def test_memory_prompt_always_present(self, project):
         from agents.prompts import build_system_prompt
 

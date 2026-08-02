@@ -794,6 +794,62 @@ class TestFunctionsViews:
         assert b"Audit &amp; privacy" in r.content
         assert b"payloads kept forever" in r.content  # default policy: 0
 
+    def test_settings_page_shows_knowledge_graph_card(self, client, project):
+        r = client.get(reverse("settings"))
+        assert b"Knowledge graph" in r.content
+
+    def test_graph_settings_update_is_audited_without_the_password(self, client, project):
+        from agents.models import AgentConnection
+        from memory.models import GraphSettings
+
+        llm = AgentConnection.objects.create(name="extract", backend="anthropic_api")
+        emb = AgentConnection.objects.create(name="embed", backend="openai_compat")
+        r = client.post(
+            reverse("graph_settings_update"),
+            {
+                "enabled": "on",
+                "neo4j_uri": "bolt://localhost:7687",
+                "neo4j_user": "neo4j",
+                "neo4j_password": "s3cret-graph-pw",
+                "llm_connection": llm.pk,
+                "embedder_connection": emb.pk,
+                "embedding_model": "nomic-embed-text",
+            },
+        )
+        assert r.status_code == 302
+        row = GraphSettings.load()
+        assert row.enabled and row.neo4j_password == "s3cret-graph-pw"  # noqa: S105  # nosec B105
+        assert row.llm_connection == llm and row.embedder_connection == emb
+        entry = AuditEntry.objects.get(action="graph.settings_updated")
+        assert entry.actor == "francesco" and entry.payload_in["password_set"] is True
+        assert "s3cret-graph-pw" not in str(entry.payload_in)
+
+    def test_graph_password_survives_an_empty_resubmit(self, client, project):
+        from memory.models import GraphSettings
+
+        client.post(reverse("graph_settings_update"), {"neo4j_password": "keep-me"})
+        client.post(reverse("graph_settings_update"), {"neo4j_uri": "bolt://x:7687"})
+        row = GraphSettings.load()
+        assert row.neo4j_password == "keep-me" and row.neo4j_uri == "bolt://x:7687"  # noqa: S105  # nosec B105
+
+    def test_graph_rejects_invalid_connection_kinds(self, client, project):
+        from agents.models import AgentConnection
+        from memory.models import GraphSettings
+
+        cc = AgentConnection.objects.create(name="cc", backend="claude_code")
+        anthropic = AgentConnection.objects.create(name="a", backend="anthropic_api")
+        client.post(
+            reverse("graph_settings_update"),
+            {"llm_connection": cc.pk, "embedder_connection": anthropic.pk},
+        )
+        row = GraphSettings.load()
+        assert row.llm_connection is None and row.embedder_connection is None
+
+    def test_memory_json_carries_graph_status(self, client, project):
+        r = client.get(reverse("memory_json", args=[project.pk]))
+        graph = r.json()["graph"]
+        assert graph["configured"] is False and graph["episodes"] == 0
+
     def test_retention_update_is_audited(self, client, project):
         from audit.models import RetentionPolicy
 

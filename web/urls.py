@@ -14,6 +14,7 @@ urlpatterns = [
     path("settings/audit-policy/", views.audit_policy_update, name="audit_policy_update"),
     path("settings/audit-purge/", views.audit_purge_now, name="audit_purge_now"),
     path("settings/audit-erase/", views.audit_erase, name="audit_erase"),
+    path("settings/graph/", views.graph_settings_update, name="graph_settings_update"),
     path("settings/connections/create/", views.connection_create, name="connection_create"),
     path("settings/connections/<int:pk>/delete/", views.connection_delete, name="connection_delete"),
     path("servers/create/", views.server_create, name="server_create"),

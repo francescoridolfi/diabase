@@ -273,16 +273,54 @@ def remove_refs(project_id: int, refs: list[str]) -> bool:
 # ---------- status / retrieval ----------
 
 
-def stats() -> dict:
+def stats(project=None) -> dict:
     """What the Memory tab needs: installed / enabled / configured, and
     the episode count as a liveness proxy (no Neo4j round trip)."""
     from .models import GraphEpisode, GraphSettings
 
     row = GraphSettings.load()
+    episodes = GraphEpisode.objects.all()
+    if project is not None:
+        episodes = episodes.filter(project=project)
     return {
         "installed": GRAPHITI_INSTALLED,
         "enabled": row.enabled,
         "configured": is_configured(),
-        "episodes": GraphEpisode.objects.count(),
+        "episodes": episodes.count(),
         "pending": _QUEUE.qsize(),
     }
+
+
+def search(project, query: str, k: int = 8) -> list[dict]:
+    """Hybrid graph search: Graphiti facts (entity relations with
+    temporal validity) scoped to the project's group. Synchronous with
+    an ephemeral client — recall calls this from the turn thread."""
+    if not is_configured() or not query.strip():
+        return []
+    import asyncio
+
+    async def _run():
+        client = _build_client()
+        try:
+            return await client.search(
+                query, group_ids=[str(project.pk)], num_results=max(1, min(int(k), 25))
+            )
+        finally:
+            await client.close()
+
+    try:
+        edges = asyncio.run(_run())
+    except Exception as e:
+        logger.warning("graph search failed: %s", e)
+        return []
+    return [
+        {
+            "source": "graph",
+            "ref": f"graph:{edge.uuid}",
+            "title": edge.name,
+            "snippet": edge.fact,
+            "valid_at": edge.valid_at.isoformat() if edge.valid_at else None,
+            "invalid_at": edge.invalid_at.isoformat() if edge.invalid_at else None,
+        }
+        for edge in edges
+    ]
