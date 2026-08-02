@@ -29,6 +29,18 @@ forzata la rotazione della password. I dati (database e secret key generata)
 vivono nel volume `diabase-data`; imposta `DIABASE_PORT` o
 `DIABASE_ALLOWED_HOSTS` nell'ambiente per cambiare i default.
 
+**Knowledge graph opzionale** — una memoria a grafo temporale (Graphiti + Neo4j)
+su azioni auditate e chat:
+
+```bash
+docker compose --profile graph up -d
+```
+
+Poi abilitalo nelle impostazioni graph con due connessioni: un LLM di estrazione
+(Anthropic o OpenAI-compatibile) e un embedder OpenAI-compatibile (Ollama va
+bene). Senza il profilo — o con Neo4j giù — Diabase si comporta esattamente come
+prima: il grafo è un potenziamento, mai un requisito.
+
 > Il backend Claude Code CLI richiede la CLI installata, che l'immagine non
 > include. Nel container usa le connessioni API (Anthropic o qualsiasi endpoint
 > OpenAI-compatibile); il backend Claude Code funziona da checkout dei sorgenti.

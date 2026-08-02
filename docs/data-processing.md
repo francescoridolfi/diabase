@@ -15,6 +15,7 @@ the tools Diabase gives you to meet retention and erasure obligations
 | Context files | `ContextFile` | Whatever you uploaded |
 | Function sources | `EdgeFunctionSource` | The code you deployed |
 | LLM API keys | `AgentConnection` | Encrypted at rest (Fernet), never displayed back |
+| Graph episodes (optional, graph profile only) | Neo4j via Graphiti | **Potentially yes** — entities extracted from audited actions and chat |
 
 Auth configuration secrets from managed Supabase projects (SMTP password,
 OAuth secrets) are **redacted at the adapter** before they can reach the
@@ -32,6 +33,14 @@ Personal data lives only in the **payloads**. The one sanctioned mutation
 actor, action, outcome, timestamp — is untouched. Redacted entries show a
 `redacted` pill in the audit log. Every redaction run records its own
 `audit.redacted` entry (criterion and row count, never the searched text).
+
+### Graph memory follows the tombstones
+
+With the optional knowledge graph enabled, audited actions and chat exchanges
+also become episodes in Neo4j (entities and relations extracted by an LLM).
+Every episode is tracked in a bridge table (`GraphEpisode`): payload redaction
+and chat deletion queue the removal of the derived episodes from the graph, so
+an erasure never survives in graph form.
 
 ## Retention policy
 
