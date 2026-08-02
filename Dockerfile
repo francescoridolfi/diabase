@@ -8,10 +8,12 @@ WORKDIR /app
 
 # dependencies first so code edits don't bust the layer cache
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+# graph extra ships in the image so `--profile graph` needs no rebuild;
+# without Neo4j configured it stays dormant
+RUN uv sync --frozen --no-dev --extra graph --no-install-project
 
 COPY . .
-RUN uv sync --frozen --no-dev \
+RUN uv sync --frozen --no-dev --extra graph \
     && DIABASE_SECRET_KEY=collectstatic-only uv run python manage.py collectstatic --noinput
 
 RUN useradd --create-home diabase \

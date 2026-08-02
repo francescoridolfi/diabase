@@ -9,9 +9,29 @@ services:
       # unset: the entrypoint generates one into the data volume on first boot
       DIABASE_SECRET_KEY: ${DIABASE_SECRET_KEY:-}
       DIABASE_DB_NAME: /data/db.sqlite3
+      # picked up by the graph memory service when the graph profile runs
+      DIABASE_NEO4J_URI: ${DIABASE_NEO4J_URI:-bolt://neo4j:7687}
+      DIABASE_NEO4J_USER: neo4j
+      DIABASE_NEO4J_PASSWORD: ${DIABASE_NEO4J_PASSWORD:-diabase-graph}
     volumes:
       - diabase-data:/data
     restart: unless-stopped
 
+  # optional temporal knowledge graph backend: docker compose --profile graph up
+  neo4j:
+    profiles: ["graph"]
+    image: neo4j:5
+    environment:
+      NEO4J_AUTH: neo4j/${DIABASE_NEO4J_PASSWORD:-diabase-graph}
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
 volumes:
   diabase-data:
+  neo4j-data:
