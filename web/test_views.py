@@ -810,7 +810,7 @@ class TestFunctionsViews:
                 "enabled": "on",
                 "neo4j_uri": "bolt://localhost:7687",
                 "neo4j_user": "neo4j",
-                "neo4j_password": "s3cret-graph-pw",
+                "neo4j_password": "s3cret-graph-pw",  # noqa: S106  # nosec B105
                 "llm_connection": llm.pk,
                 "embedder_connection": emb.pk,
                 "embedding_model": "nomic-embed-text",
@@ -827,7 +827,7 @@ class TestFunctionsViews:
     def test_graph_password_survives_an_empty_resubmit(self, client, project):
         from memory.models import GraphSettings
 
-        client.post(reverse("graph_settings_update"), {"neo4j_password": "keep-me"})
+        client.post(reverse("graph_settings_update"), {"neo4j_password": "keep-me"})  # nosec B105
         client.post(reverse("graph_settings_update"), {"neo4j_uri": "bolt://x:7687"})
         row = GraphSettings.load()
         assert row.neo4j_password == "keep-me" and row.neo4j_uri == "bolt://x:7687"  # noqa: S105  # nosec B105
