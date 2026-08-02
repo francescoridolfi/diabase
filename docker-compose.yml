@@ -1,0 +1,17 @@
+services:
+  diabase:
+    build: .
+    ports:
+      - "${DIABASE_PORT:-8000}:8000"
+    environment:
+      DIABASE_DEBUG: "0"
+      DIABASE_ALLOWED_HOSTS: ${DIABASE_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      # unset: the entrypoint generates one into the data volume on first boot
+      DIABASE_SECRET_KEY: ${DIABASE_SECRET_KEY:-}
+      DIABASE_DB_NAME: /data/db.sqlite3
+    volumes:
+      - diabase-data:/data
+    restart: unless-stopped
+
+volumes:
+  diabase-data:

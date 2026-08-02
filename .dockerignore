@@ -1,0 +1,12 @@
+.git
+.venv
+__pycache__
+*.pyc
+db.sqlite3
+staticfiles
+.claude
+.pre-commit-config.yaml
+.github
+docs
+README*.md
+CLAUDE.md
