@@ -297,10 +297,15 @@ def memory_json(request, pk):
     """The memory index as the agent sees it: stats always, plus search
     results when ?q= is given — the tab is a transparency window onto
     exactly what recall() can retrieve."""
+    from memory import graph
     from memory.services import reindex_running, search, stats
 
     project = get_object_or_404(Project, pk=pk)
-    payload = {"stats": stats(project), "indexing": reindex_running(project)}
+    payload = {
+        "stats": stats(project),
+        "indexing": reindex_running(project),
+        "graph": graph.stats(project),
+    }
     query = request.GET.get("q", "").strip()
     if query:
         sources = [s for s in request.GET.get("sources", "").split(",") if s]
@@ -380,8 +385,11 @@ def settings_page(request):
     from django.utils import timezone
 
     from audit.models import AuditEntry, RetentionPolicy
+    from memory import graph
+    from memory.models import GraphSettings
 
     retention = RetentionPolicy.load()
+    graph_settings = GraphSettings.load()
     expired = 0
     if retention.audit_payload_days:
         cutoff = timezone.now() - timedelta(days=retention.audit_payload_days)
@@ -399,9 +407,55 @@ def settings_page(request):
             "retention_is_custom": retention.audit_payload_days not in presets,
             "expired_count": expired,
             "projects": Project.objects.select_related("server").order_by("name"),
+            "graph_settings": graph_settings,
+            "graph_status": graph.stats(),
+            # claude_code has no API surface Graphiti can drive; embeddings
+            # exist only on OpenAI-compatible endpoints
+            "graph_llm_choices": AgentConnection.objects.exclude(backend="claude_code"),
+            "graph_embedder_choices": AgentConnection.objects.filter(backend="openai_compat"),
             "nav_active": "settings",
         },
     )
+
+
+@require_POST
+def graph_settings_update(request):
+    """The Knowledge graph card: Neo4j endpoint, the two connections,
+    the toggle. The password is write-only — an empty field keeps the
+    stored one, and only `password_set` ever reaches the audit trail."""
+    from memory.models import GraphSettings
+
+    row = GraphSettings.load()
+    row.enabled = request.POST.get("enabled") == "on"
+    row.neo4j_uri = request.POST.get("neo4j_uri", "").strip()
+    row.neo4j_user = request.POST.get("neo4j_user", "").strip()
+    password = request.POST.get("neo4j_password", "")
+    if password:
+        row.neo4j_password = password  # encrypted by the setter
+    row.llm_connection = (
+        AgentConnection.objects.exclude(backend="claude_code")
+        .filter(pk=request.POST.get("llm_connection") or None)
+        .first()
+    )
+    row.embedder_connection = AgentConnection.objects.filter(
+        backend="openai_compat", pk=request.POST.get("embedder_connection") or None
+    ).first()
+    row.embedding_model = request.POST.get("embedding_model", "").strip()
+    row.save()
+    record(
+        action="graph.settings_updated",
+        actor_type="user",
+        actor=_actor(request),
+        payload_in={
+            "enabled": row.enabled,
+            "neo4j_uri": row.neo4j_uri,
+            "llm_connection": row.llm_connection.name if row.llm_connection else None,
+            "embedder_connection": row.embedder_connection.name if row.embedder_connection else None,
+            "embedding_model": row.embedding_model,
+            "password_set": bool(row.neo4j_password_encrypted),
+        },
+    )
+    return redirect("settings")
 
 
 @require_POST

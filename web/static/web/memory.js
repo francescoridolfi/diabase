@@ -4,7 +4,7 @@
 
 import { esc } from "./md.js";
 
-const SOURCE_ICONS = { schema: "⛁", audit: "◉", chat: "💬", context: "▤" };
+const SOURCE_ICONS = { schema: "⛁", audit: "◉", chat: "💬", context: "▤", graph: "◈" };
 
 export function initMemory({ paneEl, urls, csrf }) {
   let loaded = false;
@@ -18,11 +18,15 @@ export function initMemory({ paneEl, urls, csrf }) {
     <div class="row-actions" style="margin-top:1rem">
       <span class="muted" id="mem-stats"></span>
       <button type="button" class="ghost" id="mem-reindex">Reindex</button>
+    </div>
+    <div class="row-actions" style="margin-top:0.3rem">
+      <span class="muted" id="mem-graph"></span>
     </div>`;
 
   const input = paneEl.querySelector("#mem-q");
   const resultsEl = paneEl.querySelector("#mem-results");
   const statsEl = paneEl.querySelector("#mem-stats");
+  const graphEl = paneEl.querySelector("#mem-graph");
   const reindexBtn = paneEl.querySelector("#mem-reindex");
 
   let poller = null;
@@ -35,6 +39,22 @@ export function initMemory({ paneEl, urls, csrf }) {
       Object.entries(stats)
         .map(([s, n]) => `${s} ${n}`)
         .join(" · ");
+  }
+
+  /* the knowledge graph is optional: one quiet line says whether these
+     chunks are also feeding temporal facts, and how many landed */
+  function renderGraph(graph) {
+    if (!graph || (!graph.installed && !graph.enabled)) {
+      graphEl.textContent = "";
+      return;
+    }
+    if (graph.configured) {
+      graphEl.textContent =
+        `◈ knowledge graph active — ${graph.episodes} episode${graph.episodes === 1 ? "" : "s"}` +
+        (graph.pending ? ` · ${graph.pending} queued` : "");
+    } else {
+      graphEl.textContent = "◈ knowledge graph off — configure it in Settings";
+    }
   }
 
   /* while a background reindex runs, the stats line ticks along with it */
@@ -78,6 +98,7 @@ export function initMemory({ paneEl, urls, csrf }) {
     try {
       const data = await fetch(url).then((r) => r.json());
       renderStats(data.stats, data.indexing);
+      renderGraph(data.graph);
       renderResults(data.results ?? null);
       setPolling(Boolean(data.indexing));
     } catch (e) {

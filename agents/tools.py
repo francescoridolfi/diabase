@@ -248,9 +248,10 @@ TOOLS: list[ToolSpec] = [
         name="recall",
         description=(
             "Search the project's memory index: schema table cards (columns, both FK directions, "
-            "indexes), past audited write actions, chat history, context files. Use it BEFORE "
-            "designing schema changes or answering why/where/what-touches questions — results "
-            "carry references to follow up with the targeted tools."
+            "indexes), past audited write actions, chat history, context files — plus, when the "
+            "knowledge graph is active, temporal facts (entity relations with validity windows). "
+            "Use it BEFORE designing schema changes or answering why/where/what-touches questions "
+            "— results carry references to follow up with the targeted tools."
         ),
         input_schema={
             "type": "object",
@@ -258,8 +259,11 @@ TOOLS: list[ToolSpec] = [
                 "query": {"type": "string", "description": "What to look for."},
                 "sources": {
                     "type": "array",
-                    "items": {"type": "string", "enum": ["schema", "audit", "chat", "context"]},
-                    "description": "Restrict to these sources (default: all).",
+                    "items": {"type": "string", "enum": ["schema", "audit", "chat", "context", "graph"]},
+                    "description": (
+                        'Restrict to these sources (default: all). "graph" returns temporal '
+                        "facts and is silently unavailable when the knowledge graph is off."
+                    ),
                 },
                 "k": {"type": "integer", "description": "Max results (default 8)."},
             },
@@ -600,11 +604,16 @@ class BoundToolset:
         """Memory search lives in Diabase's own DB (like context files),
         so it is audited here rather than through the adapter."""
         from audit.services import record
+        from memory import graph
         from memory.services import search
 
         if self.project is None:
             return {"error": "No project bound to this toolset"}
+        # graph facts ride along whenever the graph is active and wanted;
+        # lexical search ignores the "graph" source name on its own
         results = search(self.project, query, sources=sources, k=k)
+        if sources is None or "graph" in sources:
+            results = graph.search(self.project, query, k=k) + results
         record(
             action="recall",
             actor_type="agent",
@@ -613,7 +622,10 @@ class BoundToolset:
             payload_in={"query": query, "sources": sources or "all"},
             payload_out={"results": len(results)},
         )
-        return {"query": query, "results": results}
+        out = {"query": query, "results": results}
+        if sources and "graph" in sources and not graph.is_configured():
+            out["note"] = "The knowledge graph is not active; graph results are unavailable."
+        return out
 
     def _read_context_file(self, file_name: str, offset: int, limit: int) -> dict:
         """Context files live in Diabase's own DB, not behind the adapter,

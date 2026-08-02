@@ -80,6 +80,49 @@
       <button type="button" class="ghost" style="color:var(--danger)" data-modal-open="modal-erase">Erase…</button>
     </div>
   </div>
+
+  <div class="card" style="margin-top:1rem">
+    <div class="card-head">
+      <h2>Knowledge graph</h2>
+      {% if graph_status.configured %}<span class="pill ok">active — {{ graph_status.episodes }} episode{{ graph_status.episodes|pluralize }}</span>
+      {% elif not graph_status.installed %}<span class="pill err" title="Install the graph extra: uv sync --extra graph">graphiti not installed</span>
+      {% else %}<span class="pill">off</span>{% endif %}
+    </div>
+    <p class="muted" style="margin-top:0">
+      Optional temporal memory (Graphiti + Neo4j): audited actions and chat become entity
+      relations with validity windows, searchable by the agent via <code>recall</code>.
+      Extraction runs an LLM call per episode — pick a cheap or local model.
+    </p>
+    <form method="post" action="{% url 'graph_settings_update' %}" class="stack">{% csrf_token %}
+      <label class="row-actions" style="justify-content:flex-start; gap:0.5rem; cursor:pointer">
+        <input type="checkbox" name="enabled" {% if graph_settings.enabled %}checked{% endif %}>
+        <span>Enable the knowledge graph</span>
+      </label>
+      <label class="lbl">Neo4j URI</label>
+      <input name="neo4j_uri" value="{{ graph_settings.neo4j_uri }}" placeholder="bolt://localhost:7687 — empty uses DIABASE_NEO4J_URI" autocomplete="off">
+      <label class="lbl">Neo4j user</label>
+      <input name="neo4j_user" value="{{ graph_settings.neo4j_user }}" placeholder="neo4j" autocomplete="off">
+      <label class="lbl">Neo4j password</label>
+      <input name="neo4j_password" type="password" autocomplete="new-password"
+             placeholder="{% if graph_settings.neo4j_password_encrypted %}stored encrypted — leave empty to keep{% else %}stored encrypted, never shown again{% endif %}">
+      <label class="lbl">Extraction LLM</label>
+      <select name="llm_connection">
+        <option value="">— pick a connection —</option>
+        {% for c in graph_llm_choices %}<option value="{{ c.pk }}" {% if graph_settings.llm_connection_id == c.pk %}selected{% endif %}>{{ c.name }} ({{ c.get_backend_display }})</option>{% endfor %}
+      </select>
+      <label class="lbl">Embedder <span class="muted" style="text-transform:none">(OpenAI-compatible only)</span></label>
+      <select name="embedder_connection">
+        <option value="">— pick a connection —</option>
+        {% for c in graph_embedder_choices %}<option value="{{ c.pk }}" {% if graph_settings.embedder_connection_id == c.pk %}selected{% endif %}>{{ c.name }}{% if c.base_url %} — {{ c.base_url }}{% endif %}</option>{% endfor %}
+      </select>
+      <label class="lbl">Embedding model <span class="muted" style="text-transform:none">(optional)</span></label>
+      <input name="embedding_model" value="{{ graph_settings.embedding_model }}" placeholder="nomic-embed-text, text-embedding-3-small…" autocomplete="off">
+      <div class="row-actions">
+        <span class="muted">{% if graph_status.pending %}{{ graph_status.pending }} episode{{ graph_status.pending|pluralize }} queued for extraction{% endif %}</span>
+        <button type="submit">Save graph settings</button>
+      </div>
+    </form>
+  </div>
 </div>
 
 <div class="modal-overlay modal-sm" id="modal-erase" role="dialog" aria-modal="true" aria-label="Right to erasure">
